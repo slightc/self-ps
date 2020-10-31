@@ -489,13 +489,6 @@
 		filter: invert(  var(--icon_eye_invrt)  );
 		/*background-size: 15px 15px;*/
 	}
-	.head .cmark
-	{
-		width: 22px;
-		background-image: var(--icon_checkmark);/*url("../img/lrs/eye.png");*/
-		filter: invert(  var(--icon_checkmark_invrt)  );
-		/*background-size: 15px 15px;*/
-	}
 	
 	
 	.head  .open
@@ -1048,7 +1041,7 @@ input[type="checkbox"]:checked + label:before {  content: "\2713";  }
 	.window  .flabel
 	{
 		display:inline-block;
-		min-width:4em;
+		min-width:6em;
 	}
 	
 	.window .noalign  .flabel
@@ -1128,10 +1121,22 @@ input[type="checkbox"]:checked + label:before {  content: "\2713";  }
 	.confbar .fitem {
 		margin-right: 0.35em;
 	}
+
+	.confbar .fitem > svg {
+		display: none;
+	}
+
+	.fitem.bbtn.active {
+		font-size: 12px;
+	}
 	
 	.confbar .body  > .fitem
 	{
 		margin-right: 1.2em;
+	}
+
+	.confbar .body .fitem > input[type='checkbox'] {
+		vertical-align: baseline;
 	}
 	
 	.floatcont

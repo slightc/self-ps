@@ -274,16 +274,10 @@
 		var crds = null;
 		var epsv = null;
 		
-		//var prv="", gotPRV = false;
-		
 		for(var li=0; li<lines.length; li++)
 		{
 			var line = lines[li].trim();
 			if(line.charAt(0)=="%") {
-				line = line.slice(1);
-				//if(line=="AI9_PrivateDataEnd") gotPRV = false;
-				//if(gotPRV) prv+=line;
-				//if(line=="AI9_DataStream"    ) gotPRV = true;
 				while(line.charAt(0)=="%") line = line.slice(1);
 				var pts = line.split(":");
 				if(pts[0]=="BoundingBox")  {crds = pts[1].trim().split(/[ ]+/).map(parseFloat);  }
@@ -291,15 +285,6 @@
 				if(line.indexOf("!PS-Adobe-2.0 EPSF-1.2")!=-1) epsv=line;
 			}
 		}
-		/*
-		if(prv!="" && false) {
-			//console.log(prv);
-			var buf = new Uint8Array(prv.length);
-			for(var i=0; i<prv.length; i++) buf[i]=prv.charCodeAt(i);
-			var bin = FromPS.F.ASCII85Decode({buff:buf, off:0});
-			var bytes = pako["inflate"](bin);
-			FileLoader.save(bytes.buffer, "file.eps");
-		}*/
 		
 		if(epsv==null || crds==null) crds = [0,0,595, 842];
 		
@@ -321,7 +306,6 @@
 		var defs = [
 			"def","undef","known","begin","end","currentfile","currentdict",
 			"currentpacking","setpacking","currentoverprint","setoverprint","currentglobal","setglobal",
-			"gcheck",
 			"currentsystemparams","setsystemparams","currentuserparams","setuserparams","currentpagedevice","setpagedevice",
 			"currentflat",
 			"currentlinewidth","currentdash","currentpoint","currentscreen","setscreen","currenthalftone",
@@ -377,8 +361,6 @@
 		for(var i=0; i<withCtx.length; i++) defs.push(withCtx[i]+"---");
 		
 		FromPS._myOps = FromPS.makeProcs({ 
-			"CIDSystemInfo": "/CIDSystemInfo",  // some PDF ToUnicode entries have "CIDSystemInfo" instead of "/CIDSystemInfo"
-		
 			"findfont"    : "/Font findresource",
 			"definefont"  : "/Font defineresource",
 			"undefinefont": "/Font undefineresource",
@@ -664,9 +646,6 @@
 					var nv = env[op.slice(7)];
 					os.push({typ:(typeof nv=="boolean")?"boolean":"dict",val:nv});  
 				}
-				else if(op=="gcheck") {
-					var v = os.pop();  os.push({typ:"boolean",val:false});  //console.log(v, env);  throw "e";
-				}
 				else if(["setpacking","setoverprint","setglobal","setsystemparams","setuserparams","setpagedevice"].indexOf(op)!=-1) {  env[op.slice(3)] = os.pop().val;  }
 				else if(op=="currentflat"   ) {  os.push({typ:"real",val:1});  }
 				else if(op=="currentlinewidth") {  os.push({typ:"real",val:gst.lwidth});  }
@@ -738,11 +717,10 @@
 					
 					var top = os.pop();  os.push(top);
 					if(op=="image" && top.typ=="dict") {
-						var dic = os.pop().val;  //console.log("---------------------------------",dic);
+						var dic = os.pop().val;
 						w = dic["Width"].val;  h = dic["Height"].val;  bpc = dic["BitsPerComponent"].val;  mat = FromPS.readArr(dic["ImageMatrix"].val);
-						ncomp = dic["NComponents"]?dic["NComponents"].val:1;  multi = dic["MultipleDataSources"]?dic["MultipleDataSources"].val:false;
+						ncomp = dic["NComponents"].val;  multi = dic["MultipleDataSources"].val;
 						srcs = dic["DataSource"].val;  //console.log(srcs);  throw "e";
-						if(dic["DataSource"].typ=="file") srcs=[dic["DataSource"]];
 						//console.log(op,w,h, ncomp, gst.space, dic);
 					}
 					else {
@@ -751,7 +729,7 @@
 						if(multi) {  srcs[2]=os.pop();  srcs[1]=os.pop();  srcs[0]=os.pop();  }  else srcs = [os.pop()];
 						var mat = FromPS.readArr(os.pop().val), bpc = os.pop().val, h = os.pop().val, w = os.pop().val;						
 					}
-					if(ncomp!=1 && ncomp!=3 && ncomp!=4) throw "unsupported number of channels "+ncomp;
+					if(ncomp!=3 && ncomp!=4) throw "unsupported number of channels "+ncomp;
 					if(bpc!=8) throw "unsupported bits per channel: "+bpc;
 					
 					var img = new Uint8Array(w*h*4);  for(var i=0; i<img.length; i++) img[i]=255;
@@ -781,10 +759,7 @@
 						}
 					}
 					else  {
-						var row;
-						if(srcs[0].typ=="file") row = FromPS.GetFile(srcs[0]).val.buff;
-						else                    row = os.pop().val;  
-						dlen = Math.floor(row.length/3);
+						var row = os.pop().val;  dlen = Math.floor(row.length/3);
 						//if(row[0]==null) {  console.log(ds);  throw "e";  }
 						for(var j=0; j<dlen; j++) {  var tj=j*3, qj=(pind+j)*4;  img[qj+0]=row[tj+0];  img[qj+1]=row[tj+1];  img[qj+2]=row[tj+2];  }
 					}
@@ -798,13 +773,7 @@
 							var rgb = UDOC.C.cmykToRgb(clr);
 							img[i]=rgb[0]*255;  img[i+1]=rgb[1]*255;  img[i+2]=rgb[2]*255;  img[i+3]=255;
 						}
-						var ocm = gst.ctm.slice();
-						var nm = mat.slice(0);  UDOC.M.invert(nm);
-						var sm = [w,0,0,-h,0,h]; 
-						UDOC.M.concat(sm,nm); 
-						UDOC.M.concat(gst.ctm, sm);
 						genv.PutImage(gst, img, w, h);
-						gst.ctm=ocm;
 					}
 					else {  prm[7]=pind;  es.push(tok); 
 						if(srcs[0].typ=="procedure")  for(var i=0; i<srcs.length; i++) FromPS.addProc(srcs[i],es);
@@ -1457,7 +1426,6 @@
 		var nb;
 		if     (ftyp=="/ASCII85Decode"  ) nb = FromPS.F.ASCII85Decode(fl);
 		else if(ftyp=="/RunLengthDecode") nb = FromPS.F.RunLengthDecode(fl);
-		else if(ftyp=="/FlateDecode"    ) nb = FromPS.F.FlateDecode(fl);
 		else if(ftyp=="/SubFileDecode"  ) {
 			var str = f[1], cnt = f[2];
 			
@@ -1528,7 +1496,6 @@
 			return new Uint8Array(arr);
 		},
 		ASCII85Decode : function(file) {
-			//console.log(file, file.off);
 			//console.log(PUtils.readASCII(file.buff, file.off, 160));
 			var pws = [85*85*85*85, 85*85*85, 85*85, 85, 1];
 			var arr = [], i=0, tc=0, off=file.off;
@@ -1548,7 +1515,7 @@
 					return new Uint8Array(arr);  
 				}
 				if(cc==122) {  arr.push(0,0,0,0);  continue;  }
-				if(cc<33 || 84+33<cc) {  console.log(cc, String.fromCharCode(cc), off-file.off);  throw "e";  }
+				if(cc<33 || cc-33>84) {  console.log(cc, String.fromCharCode(cc), off-file.off);  throw "e";  }
 				tc += (cc-33)*pws[i];  i++;
 				if(i==5) {
 					arr.push((tc>>>24)&255);  arr.push((tc>>>16)&255);
@@ -1817,7 +1784,7 @@
 	
 	FromPS._normColor = function(fn, vls, cs) {
 		//console.log(cs);
-		var CMYK = "/DeviceCMYK", RGB="/DeviceRGB";
+		var CMYK = "/DeviceCMYK";
 		var tcs;
 		//console.log(fn, vls, cs);
 		var clr = FromPS.Func(fn, vls);  //console.log(clr);
@@ -1825,22 +1792,21 @@
 			//console.log(cs[3]);  //throw "e";
 			clr = FromPS.Func(cs[3], clr);
 			//console.log(clr);
-			if     (cs[2]==CMYK || clr.length==4) tcs = CMYK;
-			else if(cs[2]==RGB) tcs = RGB;
+			if(cs[2]==CMYK || clr.length==4) tcs = CMYK
 			else {  console.log(clr, cs);  throw "unknown color profile";  }
 			//console.log(clr);
 		}
 		else if(cs[0]=="/ICCBased" && cs[1]) {
 			var N = cs[1]["/N"];
 			if     (N==4) tcs = CMYK;
-			else if(N==3) tcs = RGB;
+			else if(N==3) tcs = "/DeviceRGB";
 			else throw N;
 		}
 		else if(cs .length==1) tcs = cs[0];
 		else if(cs[2]==CMYK ) tcs = CMYK;  // for shading.ps
 		else tcs = cs;
 		
-		if     (tcs==RGB          ) clr = clr;
+		if     (tcs=="/DeviceRGB" ) clr = clr;
 		else if(tcs==CMYK         ) clr = UDOC.C.cmykToRgb(clr);
 		else if(tcs=="/DeviceGray") clr = [clr[0], clr[0], clr[0]];
 		else throw "Unknown color space "+tcs;
@@ -2111,12 +2077,6 @@
 		var l=str.length, fl = new Uint8Array(l);  for(var i=0; i<l; i++) fl[i]=str.charCodeAt(i);
 		es.push( {typ:"file", val: { buff:fl, off:0,extra:xo}}  );		
 	}
-	FromPDF._pushForm = function(es, xo, clgrp) {
-		var lmat = xo["/Matrix"]
-		if(lmat) {  var im = lmat.slice(0);  UDOC.M.invert(im);  FromPDF.addCmd(im.join(" ")+" cm", es,xo);  }
-		es.push( {typ:"file", val: { buff:FromPS.GS(xo), off:0, extra:xo, clgrp:clgrp }}  );
-		if(lmat) FromPDF.addCmd(lmat.join(" ")+" cm", es,xo);
-	}
 	FromPDF.operator = function(op, os, ds, es, gs, env, genv)
 	{
 		var gst = env.gst;
@@ -2126,7 +2086,7 @@
 		if(op=="Do") {
 			var nam = os.pop().val, xo = res["/XObject"][nam];
 			//console.log(xo);
-			var st=xo["/Subtype"];
+			var st=xo["/Subtype"], stm = FromPS.GS(xo), lmat = xo["/Matrix"];
 			if(st=="/Form")  {
 				var gr = xo["/Group"];
 				var clgrp = false
@@ -2136,7 +2096,9 @@
 					clgrp = true;
 				}
 				//console.log(FromPS.B.readASCII(stm,0,stm.length));
-				FromPDF._pushForm(es,xo,clgrp);
+				if(lmat) {  var im = lmat.slice(0);  UDOC.M.invert(im);  FromPDF.addCmd(im.join(" ")+" cm", es,xo);  }
+				es.push( {typ:"file", val: { buff:stm, off:0, extra:xo, clgrp:clgrp }}  );
+				if(lmat) FromPDF.addCmd(lmat.join(" ")+" cm", es,xo);
 			}
 			else if(st=="/Image")  {
 				var sms, smG;  //console.log(xo, JSON.parse(JSON.stringify(gst)));
@@ -2234,7 +2196,7 @@
 			if(sar.typ=="string") sar = [sar];
 			else sar = sar.val;
 			
-			//var rfnt = res["/Font"][fnt];
+			var rfnt = res["/Font"][fnt];
 			
 			var tf = gst.font.Tf;
 			var fnt = res["/Font"][tf];
@@ -2274,22 +2236,21 @@
 					c=[os.pop().val, os.pop().val, os.pop().val];  c.reverse();  }
 			else if(cs=="/DeviceCMYK" || (cs=="/ICCBased" && sps[csi][1]["/N"]==4)) {  
 					var cmyk=[os.pop().val,os.pop().val,os.pop().val,os.pop().val];  cmyk.reverse();  c = UDOC.C.cmykToRgb(cmyk);  }
-			else if(cs=="/DeviceGray" || cs=="/CalGray" || (cs=="/ICCBased" && sps[csi][1]["/N"]==1)) {  var gv=FromPS.nrm(os.pop().val);  c=[gv,gv,gv];  }
+			else if(cs=="/DeviceGray" || cs=="/CalGray") {  var gv=FromPS.nrm(os.pop().val);  c=[gv,gv,gv];  }
 			else if(cs=="/Separation") {  
 				var cval = FromPS.Func(sps[csi][3], [os.pop().val]);  
-				if     (sps && sps[csi] && sps[csi][2]=="/DeviceCMYK") c = UDOC.C.cmykToRgb(cval); 
-				else if(sps && sps[csi] && sps[csi][2]=="/DeviceGray") c = [cval[0],cval[0],cval[0]];
+				if(sps && sps[csi] && sps[csi][2]=="/DeviceCMYK") c = UDOC.C.cmykToRgb(cval); 
 				else c = UDOC.C.labToRgb(cval); 
 			}
 			else if(cs=="/Pattern")    {  
 				//*
 				var pt = res["/Pattern"][os.pop().val];  //console.log(pt);
 				var ptyp = pt["/PatternType"];
-				if(ptyp==1) {  console.log("tile pattern");  FromPDF._pushForm(es,pt,clgrp);  return;  }
+				if(ptyp==1) {  console.log("tile pattern");  return;  }
 				c = FromPS.getShadingFill(pt["/Shading"], pt["/Matrix"]);
 				//return;//*/  os.pop();  c=[1,0.5,0]; 
 			}
-			else {  console.log(csi, cs, sps, res);  throw("e");  }
+			else {  console.log(csi, cs, os, sps, res);  throw("e");  }
 			//console.log(c);
 			if(stk) gst.COLR = c;  else gst.colr=c;
 		}
@@ -2469,7 +2430,7 @@
 		if(st=="/Type0") {
 			//console.log(fnt);  //throw "e";
 			var ws = sfnt["/W"];
-			if(ws==null) {  m = s.length*1000*0.4;  console.log("approximating word widths");  }
+			if(ws==null) m = s.length*1000*0.4;
 			else
 			for(var i=0; i<sv.length; i+=2) {
 				var cc = (sv[i]<<8)|sv[i+1], gotW = false;
@@ -2491,22 +2452,17 @@
 		//console.log(fnt);//  throw "e";
 		//console.log(sfnt);
 		var fd = sfnt["/FontDescriptor"];
-		var pp, ps = ["","2","3"];
-		for(var i=0; i<3; i++) if(fd && fd["/FontFile"+ps[i]]) pp = "/FontFile"+ps[i];
-		
 		if(fd) {
 			if(fd["psName"]) psn=fd["psName"];
-			else if(pp) {
-				var fle = FromPS.GS(fd[pp]);
-				if(pp!=null && fle && FromPS.B.readUint(fle,0)==65536) psn = fd["psName"] = FromPDF._psName(fle);
+			else {
+				var pp, ps = ["","2","3"];
+				for(var i=0; i<3; i++) if(fd["/FontFile"+ps[i]]) pp = "/FontFile"+ps[i];
+				if(pp) {
+					var fle = FromPS.GS(fd[pp]);
+					if(pp!=null && fle && FromPS.B.readUint(fle,0)==65536) psn = fd["psName"] = FromPDF._psName(fle);
+				}
 			}
 		}
-		
-		//if(pp && FromPS.GS(fd[pp]) &&  fnt.__a==null) {  //console.log(fnt);  fnt.__a = 1;  
-			//var ff = FromPS.GS(fd[pp]);  //ff[0]=ff[2]=ff[3]=0;   ff[1]=1; 
-			//FileLoader.save(ff.buffer, "font.ttf")  
-		//}
-		
 		if(psn==null && fnt["/BaseFont"]) psn = fnt["/BaseFont"].slice(1);
 		if(psn==null) psn = "SourceHanSansSC-Regular";
 		//if(sv.length==9) console.log(s);
@@ -2605,10 +2561,9 @@
 	}
 	
 	FromPDF.toUnicode = function(sar, tou) {
-		var cmap = tou["cmap"], s = "", cstr;
+		var cmap = tou["cmap"], s = "";
 		if(cmap==null) {
 			var file = {buff:FromPS.GS(tou), off:0};
-			//cstr = PUtils.readASCII(file.buff,0,file.buff.length);
 			//console.log(FromPS.B.readASCII(file.buff, 0, file.buff.length));
 			var os = [];	// operand stack
 			var ds = FromPS._getDictStack({});
@@ -2625,7 +2580,6 @@
 		for(var p in cmap) {  cmap=cmap[p].val;  break;  }
 		//console.log(cmap, sar);  throw "e";
 		var bfr = cmap.bfrange, bfc = cmap.bfchar, bpc = cmap["bpc"];
-		//if(bpc==2 && cstr!=null) {  console.log(cstr);  console.log(sar);  }
 		for(var i=0; i<sar.length; i+=bpc) {
 			var cc = sar[i];  if(bpc==2) cc = (cc<<8) | sar[i+1];
 			var mpd = false;
@@ -3852,7 +3806,6 @@
 	}
 	
 	ToPDF._flt   = function(n)  {  return ""+parseFloat(n.toFixed(2));  }
-	ToPDF._fltc  = function(n)  {  return ""+parseFloat(n.toFixed(3));  }
 	ToPDF._scale = function(m)  {  return Math.sqrt(Math.abs(m[0]*m[3]-m[1]*m[2]));  };
 	ToPDF._mat   = function(m){  var ms = m.map(ToPDF._flt).join(" ");  
 		if(ms=="1 0 0 1 0 0") return "";  return ms+" cm ";  }
@@ -3884,9 +3837,9 @@
 		if(ost.lwidth!=nst.lwidth) cnt += ToPDF._flt(gst.lwidth*scl) + " w ";
 		if(ost.mlimit!=nst.mlimit) cnt += ToPDF._flt(gst.mlimit) + " M ";
 		if(ost.dash!=nst.dash || ost.doff!=nst.doff) cnt += "["+dsh.join(" ")+"] "+gst.doff+" d ";
-		if(ost.COLR !=nst.COLR   ) cnt += gst.COLR.map(ToPDF._fltc).join(" ") + " RG ";
+		if(ost.COLR !=nst.COLR   ) cnt += gst.COLR.map(ToPDF._flt).join(" ") + " RG ";
 		if(ost.colr !=nst.colr   ) {
-			if(gst.colr.length!=null) cnt += gst.colr .map(ToPDF._fltc).join(" ") + " rg \n";
+			if(gst.colr.length!=null) cnt += gst.colr .map(ToPDF._flt).join(" ") + " rg \n";
 			else {
 				var ps = this._res["/Pattern"], grd = gst.colr;
 				var pi = "/P"+(ToPDF.maxI(ps)+1);
@@ -3944,48 +3897,38 @@
 	}
 	ToPDF._makeGrad = function(grd) {
 		//grd = grd.slice(0);  grd[1]=grd[2];  grd = grd.slice(0,2);
-		var bs = [], fs = [], enc=[0,1], sf = ToPDF._stopFun;
+		var bs = [], fs = [], sf = ToPDF._stopFun;
 		if(grd.length==2) return sf(grd[0][1], grd[1][1]);
 		fs.push(sf(grd[0][1], grd[1][1]));
-		for(var i=1; i<grd.length-1; i++) {  bs.push(grd[i][0]);  fs.push(sf(grd[i][1], grd[i+1][1]));  enc.push(0,1);  }
+		for(var i=1; i<grd.length-1; i++) {  bs.push(grd[i][0]);  fs.push(sf(grd[i][1], grd[i+1][1]));  }
 		
 		return {
-			"/FunctionType":3,"/Encode":enc,"/Domain":[0,1],
+			"/FunctionType":3,"/Encode":[0,1,0,1],"/Domain":[0,1],
 			"/Bounds":bs, "/Functions":fs
 		}
 	}
 	ToPDF._stopFun = function(c0, c1) {  return { "/FunctionType":2, "/C0":c0, "/C1":c1, "/Domain":[0,1], "/N":1};  }
 	
-	ToPDF.prototype.PutText = function(gst,str, stw, otf)
+	ToPDF.prototype.PutText = function(gst,str, stw)
 	{		
-		//console.log(str);
-		//console.log(otf);
 		this.setGState(gst, false);
-		var fi = this.addFont(gst.font.Tf, otf);
+		var fi = this.addFont(gst.font.Tf);
 		this._cont += "q ";
 		this._cont += ToPDF._mat(gst.ctm);  
 		this._cont += ToPDF._mat(gst.font.Tm);
 		this._cont += "BT  "+fi+" "+ToPDF._flt(gst.font.Tfs)+" Tf  0 0 Td  ("
 		
+		var win = [ 0x80, 0x20AC, 0x82, 0x201A, 0x83, 0x0192,	0x84, 0x201E, 0x85, 0x2026, 0x86, 0x2020, 0x87, 0x2021, 0x88, 0x02C6, 0x89, 0x2030,
+0x8A, 0x0160, 0x8B, 0x2039, 0x8C, 0x0152, 0x8E, 0x017D, 0x91, 0x2018, 0x92, 0x2019, 0x93, 0x201C, 0x94, 0x201D, 0x95, 0x2022, 0x96, 0x2013,
+0x97, 0x2014, 0x98, 0x02DC, 0x99, 0x2122, 0x9A, 0x0161, 0x9B, 0x203A, 0x9C, 0x0153, 0x9E, 0x017E, 0x9F, 0x0178	];
 		var bys = [];
-		
-		if(otf==null) {
-			var win = [ 0x80, 0x20AC, 0x82, 0x201A, 0x83, 0x0192,	0x84, 0x201E, 0x85, 0x2026, 0x86, 0x2020, 0x87, 0x2021, 0x88, 0x02C6, 0x89, 0x2030,
-	0x8A, 0x0160, 0x8B, 0x2039, 0x8C, 0x0152, 0x8E, 0x017D, 0x91, 0x2018, 0x92, 0x2019, 0x93, 0x201C, 0x94, 0x201D, 0x95, 0x2022, 0x96, 0x2013,
-	0x97, 0x2014, 0x98, 0x02DC, 0x99, 0x2122, 0x9A, 0x0161, 0x9B, 0x203A, 0x9C, 0x0153, 0x9E, 0x017E, 0x9F, 0x0178	];
-			for(var i=0; i<str.length; i++) {  
-				var cc=str.charCodeAt(i);  
-				if(cc>255) {  
-					var bi = win.indexOf(cc);
-					bys.push(bi==-1 ? 32 : win[bi-1]);  
-				}
-				else bys.push(cc);
+		for(var i=0; i<str.length; i++) {  
+			var cc=str.charCodeAt(i);  
+			if(cc>255) {  
+				var bi = win.indexOf(cc);
+				bys.push(bi==-1 ? 32 : win[bi-1]);  
 			}
-		} else {
-			for(var i=0; i<str.length; i++) {  
-				var cc=str.charCodeAt(i);  
-				bys.push(cc&255);
-			}
+			else bys.push(cc);
 		}
 		
 		bys = FromPS.makeString(bys);
@@ -4095,72 +4038,13 @@
 		for(var ii in xo) max = ii;
 		return max==null ? 0 : parseInt(max.slice(2));
 	}
-	ToPDF._basicFont = function(fn) {
-		//console.log(fn);
-		var ln = fn.toLowerCase();
-		var fs = [  "Helvetica"  , "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique",
-					"Times-Roman", "Times-Bold"    , "Times-Italic"     , "Times-BoldItalic"        ];
-		var fi = 0;
-		if(ln.indexOf("sans")!=-1) fi=0;
-		else if(ln.indexOf("serif")!=-1) fi=4;
-		var isB = (ln.indexOf("bold")!=-1);
-		var isI = (ln.indexOf("italic")!=-1 || ln.indexOf("oblique")!=-1 || ln.endsWith("-it"));
-		if(isB && isI) fi+=3;
-		else if(isI) fi+=2;
-		else if(isB) fi+=1;
-		//console.log(fs[fi]);
-		return fs[fi];
-	}
-	ToPDF.prototype.addFont = function(fn, otf) {
-		fn = ToPDF._basicFont(fn);
-		fn = "/"+fn;
+	ToPDF.prototype.addFont = function(fn) {
 		var fs = this._res["/Font"];
-		for(var fi in fs) if(fs[fi]["/BaseFont"]==fn) return fi;
+		for(var fi in fs) if(fs[fi]["/BaseFont"].slice(1)==fn) return fi;
 		var fi = "/F"+(ToPDF.maxI(fs)+1);
-		var nf = {  "/Type":"/Font",  "/Subtype":"/Type1",  "/BaseFont": fn, "/Encoding":"/WinAnsiEncoding" }//, "/FirstChar":0, "/LastChar":0, "/Widths":[] };
-		if(otf!=null) {
-			var cmap = "/CIDInit /ProcSet findresource begin \
-12 dict begin \
-begincmap \
-/CIDSystemInfo \
-<<  /Registry (Adobe) \
-/Ordering (UCS) \
-/Supplement 0 \
->> def \
-/CMapName /Adobe-Identity-UCS def \
-/CMapType 2 def \
-1 begincodespacerange \
-<0000> <FFFF> \
-endcodespacerange \
-1 beginbfchar \
-<0001> <200B> \
-endbfchar \
-endcmap \
-CMapName currentdict /CMap defineresource pop \
-end \
-end";
-			var buf = new Uint8Array(cmap.length);  for(var i=0; i<cmap.length; i++) buf[i]=cmap.charCodeAt(i);
-			nf["/Subtype"] = "/TrueType";
-			delete nf["/Encoding"];
-			//nf["/ToUnicode"] = { "stream":buf };
-			nf["/FirstChar"] = 0;
-			nf["/Widths"   ] = [];  for(var i=0; i<256; i++) nf["/Widths"   ].push(500);
-			nf["/LastChar" ] = nf["/Widths"   ].length-1;
-			nf["/FontDescriptor"] =  {
-				"/Ascent": 905,
-				"/CapHeight": 1010,
-				"/Descent": 211,
-				"/Flags": 4,
-				"/FontBBox": [-627, -376, 2000, 1011],
-				//"/FontFile2": {/Length: 10825, /Length1: 23164, stream: Uint8Array(23164)}
-				"/FontName": fn,
-				"/ItalicAngle": 0,
-				"/StemV": 80,
-				"/Type": "/FontDescriptor",
-				"/FontFile2":{ "stream": new Uint8Array(otf) }
-			}
-		} 
-		fs[fi] = nf;
+		fs[fi] = {  "/Type":"/Font",  "/Subtype":"/Type1",  "/BaseFont": "/"+fn, "/Encoding":"/WinAnsiEncoding"  // Type1 supports only 1 Byte per character, otherwise use Type0 
+			////"/Encoding":"/Identity-H",  "/DescendantFonts":[{  "/BaseFont":"/"+fn,  "/CIDToGIDMap":"/Identity"  }], "/ToUnicode":{"typ":"ref",ind:4} 
+		};
 		return fi;
 	}
 	ToPDF.addPage = function(xr, stm, box) {
@@ -9913,7 +9797,7 @@ UPNG.encode._main = function(nimg, w, h, dels, tabs) {
 		wUi(data,offset, 8);      offset+=4;
 		wAs(data,offset,"acTL");  offset+=4;
 		wUi(data,offset, nimg.frames.length);     offset+=4;
-		wUi(data,offset, tabs["loop"]!=null?tabs["loop"]:0);      offset+=4;
+		wUi(data,offset, 0);      offset+=4;
 		wUi(data,offset,crc(data,offset-12,12));  offset+=4; // crc
 	}
 
@@ -10205,7 +10089,7 @@ UPNG.encode._filterZero = function(img,h,bpp,bpl,data, filter)
 		return pako["deflate"](data);
 	}
 	var fls = [];
-	for(var t=0; t<5; t++) {  if(h*bpl>500000 && (t==1 || t==2 || t==3 || t==4)) continue;
+	for(var t=0; t<5; t++) {  if(h*bpl>500000 && (t==2 || t==3 || t==4)) continue;
 		for(var y=0; y<h; y++) UPNG.encode._filterLine(data, img, y, bpl, bpp, t);
 		//var nimg = new Uint8Array(data.length);
 		//var sz = UZIP.F.deflate(data, nimg);  fls.push(nimg.slice(0,sz));
@@ -11614,10 +11498,7 @@ UTIF.decode._decodeNewJPEG = function(img, data, off, len, tgt, toff)
 			if(img.isLE) for(var i=0; i<olen; i++ ) {  tgt[toff+(i<<1)] = (out[i]&255);  tgt[toff+(i<<1)+1] = (out[i]>>>8);  }
 			else         for(var i=0; i<olen; i++ ) {  tgt[toff+(i<<1)] = (out[i]>>>8);  tgt[toff+(i<<1)+1] = (out[i]&255);  }
 		}
-		else if(bps==14 || bps==12) {  // 4 * 14 == 56 == 7 * 8
-			var rst = 16-bps;
-			for(var i=0; i<olen; i++) UTIF.decode._putsF(tgt, i*bps, out[i]<<rst);
-		}
+		else if(bps==12) for(var i=0; i<olen; i+=2) {  tgt[toff++] = (out[i]>>>4);  tgt[toff++] = ((out[i]<<4)|(out[i+1]>>>8))&255;  tgt[toff++] = out[i+1]&255;  }
 		else throw new Error("unsupported bit depth "+bps);
 	}
 	else
@@ -12112,7 +11993,7 @@ UTIF._readIFD = function(bin, data, offset, ifds, depth, debug)
 			var mn = arr;
 			//console.log(bin.readASCII(mn,0,mn.length), mn);
 			if(bin.readASCII(mn,0,5)=="Nikon")  ifd.makerNote = UTIF["decode"](mn.slice(10).buffer)[0];
-			else if(bin.readUshort(data,voff)<300 && bin.readUshort(data,voff+4)<=12){
+			else if(bin.readUshort(data,voff)<300){
 				var subsub=[];  UTIF._readIFD(bin, data, voff, subsub, depth+1, debug);
 				ifd.makerNote = subsub[0];
 			}
@@ -12216,9 +12097,9 @@ UTIF.toRGBA8 = function(out)
 	return img;
 }
 
-UTIF.replaceIMG = function(imgs)
+UTIF.replaceIMG = function()
 {
-	if(imgs==null) imgs = document.getElementsByTagName("img");
+	var imgs = document.getElementsByTagName("img");
 	var sufs = ["tif","tiff","dng","cr2","nef"]
 	for (var i=0; i<imgs.length; i++)
 	{
@@ -12250,7 +12131,9 @@ UTIF._imgLoaded = function(e)
 	var cnv = document.createElement("canvas");  cnv.width=w;  cnv.height=h;
 	var ctx = cnv.getContext("2d"), imgd = ctx.createImageData(w,h);
 	for(var i=0; i<rgba.length; i++) imgd.data[i]=rgba[i];       ctx.putImageData(imgd,0,0);
-	img.setAttribute("src",cnv.toDataURL());
+	var attr = ["style","class","id"];
+	for(var i=0; i<attr.length; i++) cnv.setAttribute(attr[i], img.getAttribute(attr[i]));
+	img.parentNode.replaceChild(cnv,img);
 }
 
 
@@ -12895,6 +12778,7 @@ function GifReader(buf) {
 
   this.width = width;
   this.height = height;
+  var area = 0;
 
   while (no_eof && p < buf.length) {
     switch (buf[p++]) {
@@ -12983,7 +12867,8 @@ function GifReader(buf) {
           if (block_size === 0) break;  // 0 size is terminator
           p += block_size;
         }
-
+		area += w*h;
+		//console.log(x,y,w,h, disposal-1);
         frames.push({x: x, y: y, width: w, height: h,
                      has_local_palette: has_local_palette,
                      palette_offset: palette_offset,
@@ -13005,6 +12890,7 @@ function GifReader(buf) {
         break;
     }
   }
+  //console.log("area",area);
 
   this.numFrames = function() {
     return frames.length;
@@ -13607,219 +13493,2855 @@ try { exports.GifWriter = GifWriter; exports.GifReader = GifReader } catch(e) {}
   };
 
 })(this);
-var Typr=function(){var $={};$.parse=function(v){var h=function(i,s,N,n){var W=$.B,B=$.T,m={cmap:B.L,head:B.head,hhea:B.ve,maxp:B.vg,hmtx:B.vz,name:B.name,"OS/2":B.H,post:B.vZ,loca:B.vI,kern:B.O,glyf:B.a,"CFF ":B.u,"SVG ":B.vP},b={_data:i,_index:s,_offset:N};
-for(var U in m){var d=$.findTable(i,U,N);if(d){var e=d[0],M=n[e];if(M==null)M=m[U].U(i,e,d[1],b);b[U]=n[e]=M}}return b},W=$.B,i=new Uint8Array(v),n={},L=W.Z(i,0,4);
-if(L=="ttcf"){var N=4,S=W.n(i,N);N+=2;var a=W.n(i,N);N+=2;var l=W.e(i,N);N+=4;var J=[];for(var A=0;A<l;
-A++){var u=W.e(i,N);N+=4;J.push(h(i,A,u,n))}return J}else return[h(i,0,0,n)]};$.findTable=function(v,h,W){var i=$.B,n=i.n(v,W+4),L=W+12;
-for(var N=0;N<n;N++){var S=i.Z(v,L,4),a=i.e(v,L+4),l=i.e(v,L+8),J=i.e(v,L+12);if(S==h)return[l,J];L+=16}return null};
-$.T={};$.B={W:function(v,h){return(v[h]<<8|v[h+1])+(v[h+2]<<8|v[h+3])/(256*256+4)},X:function(v,h){var W=$.B.i(v,h);
-return W/16384},P:function(v,h){var W=$.B.h.K;W[0]=v[h+3];W[1]=v[h+2];W[2]=v[h+1];W[3]=v[h];return $.B.h.v$[0]},p:function(v,h){var W=$.B.h.K;
-W[0]=v[h];return $.B.h.vv[0]},i:function(v,h){var W=$.B.h.K;W[1]=v[h];W[0]=v[h+1];return $.B.h.vh[0]},n:function(v,h){return v[h]<<8|v[h+1]},h$:function(v,h,W){v[h]=W>>8&255;
-v[h+1]=W&255},vy:function(v,h,W){var i=[];for(var n=0;n<W;n++){var L=$.B.n(v,h+n*2);i.push(L)}return i},e:function(v,h){var W=$.B.h.K;
-W[3]=v[h];W[2]=v[h+1];W[1]=v[h+2];W[0]=v[h+3];return $.B.h.vS[0]},hv:function(v,h,W){v[h]=W>>24&255;
-v[h+1]=W>>16&255;v[h+2]=W>>8&255;v[h+3]=W>>0&255},C:function(v,h){return $.B.e(v,h)*(4294967295+1)+$.B.e(v,h+4)},Z:function(v,h,W){var i="";
-for(var n=0;n<W;n++)i+=String.fromCharCode(v[h+n]);return i},hh:function(v,h,W){for(var i=0;i<W.length;
-i++)v[h+i]=W.charCodeAt(i)},f:function(v,h,W){var i="";for(var n=0;n<W;n++){var L=v[h++]<<8|v[h++];i+=String.fromCharCode(L)}return i},vw:window.TextDecoder?new window.TextDecoder:null,hJ:function(v,h,W){var i=$.B.vw;
-if(i&&h==0&&W==v.length)return i.decode(v);return $.B.Z(v,h,W)},M:function(v,h,W){var i=[];for(var n=0;
-n<W;n++)i.push(v[h+n]);return i},hu:function(v,h,W){var i=[];for(var n=0;n<W;n++)i.push(String.fromCharCode(v[h+n]));
-return i},h:function(){var v=new ArrayBuffer(8);return{vU:v,vv:new Int8Array(v),K:new Uint8Array(v),vh:new Int16Array(v),vd:new Uint16Array(v),v$:new Int32Array(v),vS:new Uint32Array(v)}}()};
-$.T.u={U:function(v,h,W){var i=$.B,n=$.T.u;v=new Uint8Array(v.buffer,h,W);h=0;var L=v[h];h++;var N=v[h];
-h++;var S=v[h];h++;var a=v[h];h++;var l=[];h=n.z(v,h,l);var J=[];for(var A=0;A<l.length-1;A++)J.push(i.Z(v,h+l[A],l[A+1]-l[A]));
-h+=l[l.length-1];var u=[];h=n.z(v,h,u);var s=[];for(var A=0;A<u.length-1;A++)s.push(n.k(v,h+u[A],h+u[A+1]));
-h+=u[u.length-1];var B=s[0],m=[];h=n.z(v,h,m);var b=[];for(var A=0;A<m.length-1;A++)b.push(i.Z(v,h+m[A],m[A+1]-m[A]));
-h+=m[m.length-1];n.V(v,h,B);if(B.CharStrings)B.CharStrings=n.M(v,B.CharStrings);if(B.ROS){h=B.FDArray;
-var U=[];h=n.z(v,h,U);B.FDArray=[];for(var A=0;A<U.length-1;A++){var d=n.k(v,h+U[A],h+U[A+1]);n.D(v,d,b);
-B.FDArray.push(d)}h+=U[U.length-1];h=B.FDSelect;B.FDSelect=[];var e=v[h];h++;if(e==3){var t=i.n(v,h);
-h+=2;for(var A=0;A<t+1;A++){B.FDSelect.push(i.n(v,h),v[h+2]);h+=3}}else throw e}if(B.Encoding)B.Encoding=n.vE(v,B.Encoding,B.CharStrings.length);
-if(B.charset)B.charset=n.vO(v,B.charset,B.CharStrings.length);n.D(v,B,b);return B},D:function(v,h,W){var i=$.T.u,n;
-if(h.Private){n=h.Private[1];h.Private=i.k(v,n,n+h.Private[0]);if(h.Private.Subrs)i.V(v,n+h.Private.Subrs,h.Private)}for(var L in h)if("FamilyName FontName FullName Notice version Copyright".split(" ").indexOf(L)!=-1)h[L]=W[h[L]-426+35]},V:function(v,h,W){W.Subrs=$.T.u.M(v,h);
-var i,n=W.Subrs.length+1;if(!1)i=0;else if(n<1240)i=107;else if(n<33900)i=1131;else i=32768;W.Bias=i},M:function(v,h){var W=$.B,i=[];
-h=$.T.u.z(v,h,i);var n=[],L=i.length-1,N=v.byteOffset+h;for(var S=0;S<L;S++){var a=i[S];n.push(new Uint8Array(v.buffer,N+a,i[S+1]-a))}return n},hA:[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,0,111,112,113,114,0,115,116,117,118,119,120,121,122,0,123,0,124,125,126,127,128,129,130,131,0,132,133,0,134,135,136,137,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,138,0,139,0,0,0,0,140,141,142,143,0,0,0,0,0,144,0,0,0,145,0,0,146,147,148,149,0,0,0,0],vt:function(v,h){for(var W=0;
-W<v.charset.length;W++)if(v.charset[W]==h)return W;return-1},w:function(v,h){if(h<0||h>255)return-1;
-return $.T.u.vt(v,$.T.u.hA[h])},vE:function(v,h,W){var i=$.B,n=[".notdef"],L=v[h];h++;if(L==0){var N=v[h];
-h++;for(var S=0;S<N;S++)n.push(v[h+S])}else throw"error: unknown encoding format: "+L;return n},vO:function(v,h,W){var i=$.B,n=[".notdef"],L=v[h];
-h++;if(L==0){for(var N=0;N<W;N++){var S=i.n(v,h);h+=2;n.push(S)}}else if(L==1||L==2){while(n.length<W){var S=i.n(v,h),a=0;
-h+=2;if(L==1){a=v[h];h++}else{a=i.n(v,h);h+=2}for(var N=0;N<=a;N++){n.push(S);S++}}}else throw"error: format: "+L;
-return n},z:function(v,h,W){var i=$.B,n=i.n(v,h)+1;h+=2;var L=v[h];h++;if(L==1)for(var N=0;N<n;N++)W.push(v[h+N]);
-else if(L==2)for(var N=0;N<n;N++)W.push(i.n(v,h+N*2));else if(L==3)for(var N=0;N<n;N++)W.push(i.e(v,h+N*3-1)&16777215);
-else if(L==4)for(var N=0;N<n;N++)W.push(i.e(v,h+N*4));else if(n!=1)throw"unsupported offset size: "+L+", count: "+n;
-h+=n*L;return h-1},vj:function(v,h,W){var i=$.B,n=v[h],L=v[h+1],N=v[h+2],S=v[h+3],a=v[h+4],l=1,J=null,A=null;
-if(n<=20){J=n;l=1}if(n==12){J=n*100+L;l=2}if(21<=n&&n<=27){J=n;l=1}if(n==28){A=i.i(v,h+1);l=3}if(29<=n&&n<=31){J=n;
-l=1}if(32<=n&&n<=246){A=n-139;l=1}if(247<=n&&n<=250){A=(n-247)*256+L+108;l=2}if(251<=n&&n<=254){A=-(n-251)*256-L-108;
-l=2}if(n==255){A=i.P(v,h+1)/65535;l=5}W.vD=A!=null?A:"o"+J;W.size=l},hs:function(v,h,W){var i=h+W,n=$.B,L=[];
-while(h<i){var N=v[h],S=v[h+1],a=v[h+2],l=v[h+3],J=v[h+4],A=1,u=null,s=null;if(N<=20){u=N;A=1}if(N==12){u=N*100+S;
-A=2}if(N==19||N==20){u=N;A=2}if(21<=N&&N<=27){u=N;A=1}if(N==28){s=n.i(v,h+1);A=3}if(29<=N&&N<=31){u=N;
-A=1}if(32<=N&&N<=246){s=N-139;A=1}if(247<=N&&N<=250){s=(N-247)*256+S+108;A=2}if(251<=N&&N<=254){s=-(N-251)*256-S-108;
-A=2}if(N==255){s=n.P(v,h+1)/65535;A=5}L.push(s!=null?s:"o"+u);h+=A}return L},k:function(v,h,W){var i=$.B,n={},L=[];
-while(h<W){var N=v[h],S=v[h+1],a=v[h+2],l=v[h+3],J=v[h+4],A=1,u=null,s=null;if(N==28){s=i.i(v,h+1);A=3}if(N==29){s=i.P(v,h+1);
-A=5}if(32<=N&&N<=246){s=N-139;A=1}if(247<=N&&N<=250){s=(N-247)*256+S+108;A=2}if(251<=N&&N<=254){s=-(N-251)*256-S-108;
-A=2}if(N==255){s=i.P(v,h+1)/65535;A=5;throw"unknown number"}if(N==30){var B=[],e="";A=1;while(!0){var m=v[h+A];
-A++;var U=m>>4,d=m&15;if(U!=15)B.push(U);if(d!=15)B.push(d);if(d==15)break}var t=[0,1,2,3,4,5,6,7,8,9,".","e","e-","reserved","-","endOfNumber"];
-for(var M=0;M<B.length;M++)e+=t[B[M]];s=parseFloat(e)}if(N<=21){var z="version Notice FullName FamilyName Weight FontBBox BlueValues OtherBlues FamilyBlues FamilyOtherBlues StdHW StdVW escape UniqueID XUID charset Encoding CharStrings Private Subrs defaultWidthX nominalWidthX".split(" ");
-u=z[N];A=1;if(N==12){var z="Copyright isFixedPitch ItalicAngle UnderlinePosition UnderlineThickness PaintType CharstringType FontMatrix StrokeWidth BlueScale BlueShift BlueFuzz StemSnapH StemSnapV ForceBold   LanguageGroup ExpansionFactor initialRandomSeed SyntheticBase PostScript BaseFontName BaseFontBlend       ROS CIDFontVersion CIDFontRevision CIDFontType CIDCount UIDBase FDArray FDSelect FontName".split(" ");
-u=z[S];A=2}}if(u!=null){n[u]=L.length==1?L[0]:L;L=[]}else L.push(s);h+=A}return n}};$.T.L={U:function(v,h,W){v=new Uint8Array(v.buffer,h,W);
-h=0;var i=h,n=$.B,L=n.n,N=$.T.L,S={R:[],N:{}},a=L(v,h);h+=2;var l=L(v,h);h+=2;var J=[];for(var A=0;A<l;
-A++){var u=L(v,h);h+=2;var s=L(v,h);h+=2;var B=n.e(v,h);h+=4;var m="p"+u+"e"+s,b=J.indexOf(B);if(b==-1){b=S.R.length;
-var U={};J.push(B);var d=U.vp=L(v,B);if(d==0)U=N.hi(v,B,U);else if(d==4)U=N.vL(v,B,U);else if(d==6)U=N.va(v,B,U);
-else if(d==12)U=N.vl(v,B,U);S.R.push(U)}if(S.N[m]!=null)throw"multiple tables for one platform+encoding";
-S.N[m]=b}return S},hi:function(v,h,W){var i=$.B;h+=2;var n=i.n(v,h);h+=2;var L=i.n(v,h);h+=2;W.map=[];
-for(var N=0;N<n-6;N++)W.map.push(v[h+N]);return W},vL:function(v,h,W){var i=$.B,n=i.n,L=i.vy,N=h;h+=2;
-var S=n(v,h);h+=2;var a=n(v,h);h+=2;var l=n(v,h);h+=2;var J=l>>>1;W.v_=n(v,h);h+=2;W.vG=n(v,h);h+=2;
-W.vH=n(v,h);h+=2;W.vA=L(v,h,J);h+=J*2;h+=2;W.vW=L(v,h,J);h+=J*2;W.hn=[];for(var A=0;A<J;A++){W.hn.push(i.i(v,h));
-h+=2}W.T=L(v,h,J);h+=J*2;W.r=L(v,h,N+S-h>>>1);return W},va:function(v,h,W){var i=$.B,n=h;h+=2;var L=i.n(v,h);
-h+=2;var N=i.n(v,h);h+=2;W.vo=i.n(v,h);h+=2;var S=i.n(v,h);h+=2;W.r=[];for(var a=0;a<S;a++){W.r.push(i.n(v,h));
-h+=2}return W},vl:function(v,h,W){var i=$.B,n=i.e,L=h;h+=4;var N=n(v,h);h+=4;var S=n(v,h);h+=4;var a=n(v,h)*3;
-h+=4;var l=W.vs=new Uint32Array(a);for(var J=0;J<a;J+=3){l[J]=n(v,h+(J<<2));l[J+1]=n(v,h+(J<<2)+4);l[J+2]=n(v,h+(J<<2)+8)}return W}};
-$.T.a={U:function(v,h,W,i){var n=[],L=i.maxp.numGlyphs;for(var N=0;N<L;N++)n.push(null);return n},vJ:function(v,h){var W=$.B,i=v._data,n=v.loca;
-if(n[h]==n[h+1])return null;var L=$.findTable(i,"glyf",v._offset)[0]+n[h],N={};N.g=W.i(i,L);L+=2;N.vB=W.i(i,L);
-L+=2;N.vm=W.i(i,L);L+=2;N.vb=W.i(i,L);L+=2;N.vQ=W.i(i,L);L+=2;if(N.vB>=N.vb||N.vm>=N.vQ)return null;
-if(N.g>0){N.s=[];for(var S=0;S<N.g;S++){N.s.push(W.n(i,L));L+=2}var a=W.n(i,L),m=0,b=0;L+=2;if(i.length-L<a)return null;
-N.vY=W.M(i,L,a);L+=a;var l=N.s[N.g-1]+1;N.I=[];for(var S=0;S<l;S++){var J=i[L];L++;N.I.push(J);if((J&8)!=0){var A=i[L];
-L++;for(var u=0;u<A;u++){N.I.push(J);S++}}}N.v=[];for(var S=0;S<l;S++){var s=(N.I[S]&2)!=0,B=(N.I[S]&16)!=0;
-if(s){N.v.push(B?i[L]:-i[L]);L++}else{if(B)N.v.push(0);else{N.v.push(W.i(i,L));L+=2}}}N.$=[];for(var S=0;
-S<l;S++){var s=(N.I[S]&4)!=0,B=(N.I[S]&32)!=0;if(s){N.$.push(B?i[L]:-i[L]);L++}else{if(B)N.$.push(0);
-else{N.$.push(W.i(i,L));L+=2}}}for(var S=0;S<l;S++){m+=N.v[S];b+=N.$[S];N.v[S]=m;N.$[S]=b}}else{var U=1<<0,d=1<<1,e=1<<2,t=1<<3,M=1<<4,z=1<<5,X=1<<6,G=1<<7,R=1<<8,_=1<<9,k=1<<10,D=1<<11,F=1<<12,Q;
-N.q=[];do{Q=W.n(i,L);L+=2;var O={m:{B:1,vi:0,vN:0,_:1,vF:0,vu:0},vX:-1,vR:-1};N.q.push(O);O.vT=W.n(i,L);
-L+=2;if(Q&U){var I=W.i(i,L);L+=2;var g=W.i(i,L);L+=2}else{var I=W.p(i,L);L++;var g=W.p(i,L);L++}if(Q&d){O.m.vF=I;
-O.m.vu=g}else{O.vX=I;O.vR=g}if(Q&t){O.m.B=O.m._=W.X(i,L);L+=2}else if(Q&X){O.m.B=W.X(i,L);L+=2;O.m._=W.X(i,L);
-L+=2}else if(Q&G){O.m.B=W.X(i,L);L+=2;O.m.vi=W.X(i,L);L+=2;O.m.vN=W.X(i,L);L+=2;O.m._=W.X(i,L);L+=2}}while(Q&z);
-if(Q&R){var o=W.n(i,L);L+=2;N.vr=[];for(var S=0;S<o;S++){N.vr.push(i[L]);L++}}}return N}};$.T.head={U:function(v,h,W){var i=$.B,n={},L=i.W(v,h);
-h+=4;n.fontRevision=i.W(v,h);h+=4;var N=i.e(v,h);h+=4;var S=i.e(v,h);h+=4;n.flags=i.n(v,h);h+=2;n.unitsPerEm=i.n(v,h);
-h+=2;n.created=i.C(v,h);h+=8;n.modified=i.C(v,h);h+=8;n.xMin=i.i(v,h);h+=2;n.yMin=i.i(v,h);h+=2;n.xMax=i.i(v,h);
-h+=2;n.yMax=i.i(v,h);h+=2;n.macStyle=i.n(v,h);h+=2;n.lowestRecPPEM=i.n(v,h);h+=2;n.fontDirectionHint=i.i(v,h);
-h+=2;n.indexToLocFormat=i.i(v,h);h+=2;n.glyphDataFormat=i.i(v,h);h+=2;return n}};$.T.ve={U:function(v,h,W){var i=$.B,n={},L=i.W(v,h);
-h+=4;var N="ascender descender lineGap advanceWidthMax minLeftSideBearing minRightSideBearing xMaxExtent caretSlopeRise caretSlopeRun caretOffset res0 res1 res2 res3 metricDataFormat numberOfHMetrics".split(" ");
-for(var S=0;S<N.length;S++){var a=N[S],l=a=="advanceWidthMax"||a=="numberOfHMetrics"?i.n:i.i;n[a]=l(v,h+S*2)}return n}};
-$.T.vz={U:function(v,h,W,i){var n=$.B,L=[],N=[],S=i.maxp.numGlyphs,a=i.hhea.numberOfHMetrics,l=0,J=0,A=0;
-while(A<a){l=n.n(v,h+(A<<2));J=n.i(v,h+(A<<2)+2);L.push(l);N.push(J);A++}while(A<S){L.push(l);N.push(J);
-A++}return{vq:L,hW:N}}};$.T.O={U:function(v,h,W,i){var n=$.B,L=$.T.O,N=n.n(v,h);h+=2;if(N==1)return L.vk(v,h-2,W,i);
-var S=n.n(v,h);h+=2;var a={Y:[],l:[]};for(var l=0;l<S;l++){h+=2;var W=n.n(v,h);h+=2;var J=n.n(v,h);h+=2;
-var A=J>>>8;A&=15;if(A==0)h=L.A(v,h,a);else throw"unknown kern table format: "+A}return a},vk:function(v,h,W,i){var n=$.B,L=$.T.O,N=n.W(v,h);
-h+=4;var S=n.e(v,h);h+=4;var a={Y:[],l:[]};for(var l=0;l<S;l++){var W=n.e(v,h);h+=4;var J=n.n(v,h);h+=2;
-var A=n.n(v,h);h+=2;var u=J>>>8;u&=15;if(u==0)h=L.A(v,h,a);else throw"unknown kern table format: "+u}return a},A:function(v,h,W){var i=$.B,n=-1,L=i.n(v,h);
-h+=2;var N=i.n(v,h);h+=2;var S=i.n(v,h);h+=2;var a=i.n(v,h);h+=2;for(var l=0;l<L;l++){var J=i.n(v,h);
-h+=2;var A=i.n(v,h);h+=2;var u=i.i(v,h);h+=2;if(J!=n){W.Y.push(J);W.l.push({vM:[],vc:[]})}var s=W.l[W.l.length-1];
-s.vM.push(A);s.vc.push(u);n=J}return h}};$.T.vI={U:function(v,h,W,i){var n=$.B,L=[],N=i.head.indexToLocFormat,S=i.maxp.numGlyphs+1;
-if(N==0)for(var a=0;a<S;a++)L.push(n.n(v,h+(a<<1))<<1);if(N==1)for(var a=0;a<S;a++)L.push(n.e(v,h+(a<<2)));
-return L}};$.T.vg={U:function(v,h,W){var i=$.B,n=i.n,L={},N=i.e(v,h);h+=4;L.numGlyphs=n(v,h);h+=2;return L}};
-$.T.name={U:function(v,h,W){var i=$.B,n={},L=i.n(v,h),z;h+=2;var N=i.n(v,h);h+=2;var S=i.n(v,h);h+=2;
-var a="copyright fontFamily fontSubfamily ID fullName version postScriptName trademark manufacturer designer description urlVendor urlDesigner licence licenceURL --- typoFamilyName typoSubfamilyName compatibleFull sampleText postScriptCID wwsFamilyName wwsSubfamilyName lightPalette darkPalette".split(" "),l=h,J=i.n;
-for(var A=0;A<N;A++){var u=J(v,h),e;h+=2;var s=J(v,h);h+=2;var B=J(v,h);h+=2;var m=J(v,h);h+=2;var b=J(v,h);
-h+=2;var U=J(v,h);h+=2;var d=l+N*12+U;if(!1){}else if(u==0)e=i.f(v,d,b/2);else if(u==3&&s==0)e=i.f(v,d,b/2);
-else if(s==0)e=i.Z(v,d,b);else if(s==1)e=i.f(v,d,b/2);else if(s==3)e=i.f(v,d,b/2);else if(u==1){e=i.Z(v,d,b);
-console.log("reading unknown MAC encoding "+s+" as ASCII")}else throw"unknown encoding "+s+", platformID: "+u;
-var t="p"+u+","+B.toString(16);if(n[t]==null)n[t]={};n[t][a[m]]=e;n[t]._lang=B}for(var M in n)if(n[M].postScriptName!=null&&n[M]._lang==1033)return n[M];
-for(var M in n)if(n[M].postScriptName!=null&&n[M]._lang==0)return n[M];for(var M in n)if(n[M].postScriptName!=null&&n[M]._lang==3084)return n[M];
-for(var M in n)if(n[M].postScriptName!=null)return n[M];for(var M in n){z=M;break}console.log("returning name table with languageID "+n[z].hS);
-return n[z]}};$.T.H={U:function(v,h,W){var i=$.B,n=i.n(v,h);h+=2;var L=$.T.H,N={};if(n==0)L.b(v,h,N);
-else if(n==1)L.o(v,h,N);else if(n==2||n==3||n==4)L.hl(v,h,N);else if(n==5)L.vV(v,h,N);else throw"unknown OS/2 table version: "+n;
-return N},b:function(v,h,W){var i=$.B;W.xAvgCharWidth=i.i(v,h);h+=2;W.usWeightClass=i.n(v,h);h+=2;W.usWidthClass=i.n(v,h);
-h+=2;W.fsType=i.n(v,h);h+=2;W.ySubscriptXSize=i.i(v,h);h+=2;W.ySubscriptYSize=i.i(v,h);h+=2;W.ySubscriptXOffset=i.i(v,h);
-h+=2;W.ySubscriptYOffset=i.i(v,h);h+=2;W.ySuperscriptXSize=i.i(v,h);h+=2;W.ySuperscriptYSize=i.i(v,h);
-h+=2;W.ySuperscriptXOffset=i.i(v,h);h+=2;W.ySuperscriptYOffset=i.i(v,h);h+=2;W.yStrikeoutSize=i.i(v,h);
-h+=2;W.yStrikeoutPosition=i.i(v,h);h+=2;W.sFamilyClass=i.i(v,h);h+=2;W.panose=i.M(v,h,10);h+=10;W.ulUnicodeRange1=i.e(v,h);
-h+=4;W.ulUnicodeRange2=i.e(v,h);h+=4;W.ulUnicodeRange3=i.e(v,h);h+=4;W.ulUnicodeRange4=i.e(v,h);h+=4;
-W.achVendID=i.Z(v,h,4);h+=4;W.fsSelection=i.n(v,h);h+=2;W.usFirstCharIndex=i.n(v,h);h+=2;W.usLastCharIndex=i.n(v,h);
-h+=2;W.sTypoAscender=i.i(v,h);h+=2;W.sTypoDescender=i.i(v,h);h+=2;W.sTypoLineGap=i.i(v,h);h+=2;W.usWinAscent=i.n(v,h);
-h+=2;W.usWinDescent=i.n(v,h);h+=2;return h},o:function(v,h,W){var i=$.B;h=$.T.H.b(v,h,W);W.ulCodePageRange1=i.e(v,h);
-h+=4;W.ulCodePageRange2=i.e(v,h);h+=4;return h},hl:function(v,h,W){var i=$.B,n=i.n;h=$.T.H.o(v,h,W);
-W.sxHeight=i.i(v,h);h+=2;W.sCapHeight=i.i(v,h);h+=2;W.usDefault=n(v,h);h+=2;W.usBreak=n(v,h);h+=2;W.usMaxContext=n(v,h);
-h+=2;return h},vV:function(v,h,W){var i=$.B.n;h=$.T.H.hl(v,h,W);W.usLowerOpticalPointSize=i(v,h);h+=2;
-W.usUpperOpticalPointSize=i(v,h);h+=2;return h}};$.T.vZ={U:function(v,h,W){var i=$.B,n={};n.version=i.W(v,h);
-h+=4;n.italicAngle=i.W(v,h);h+=4;n.underlinePosition=i.i(v,h);h+=2;n.underlineThickness=i.i(v,h);h+=2;
-return n}};$.T.vP={U:function(v,h,W){var i=$.B,n={entries:[]},L=h,N=i.n(v,h);h+=2;var S=i.e(v,h);h+=4;
-var a=i.e(v,h);h+=4;h=S+L;var l=i.n(v,h);h+=2;for(var J=0;J<l;J++){var A=i.n(v,h);h+=2;var u=i.n(v,h);
-h+=2;var s=i.e(v,h);h+=4;var B=i.e(v,h);h+=4;var m=new Uint8Array(v.buffer,L+s+S,B),b=i.hJ(m,0,m.length);
-for(var U=A;U<=u;U++){n.entries[U]=b}}return n}};$.U={shape:function(v,h,W){var i=function(v,n,s,W){var B=n[s],m=n[s+1],b=v.kern;
-if(b){var U=b.Y.indexOf(B);if(U!=-1){var d=b.l[U].vM.indexOf(m);if(d!=-1)return[0,0,b.l[U].vc[d],0]}}return[0,0,0,0]},n=[],a=0,l=0;
-for(var L=0;L<h.length;L++){var N=h.codePointAt(L);if(N>65535)L++;n.push($.U.codeToGlyph(v,N))}var S=[];
-for(var L=0;L<n.length;L++){var J=i(v,n,L,W),A=n[L],u=v.hmtx.vq[A]+J[2];S.push({g:A,cl:L,dx:0,dy:0,ax:u,ay:0});
-a+=u}return S},shapeToPath:function(v,h){var W={J:[],S:[]},i=0,n=0;for(var L=0;L<h.length;L++){var N=h[L],S=$.U.glyphToPath(v,N.g),a=S.crds;
-for(var l=0;l<a.length;l+=2){W.S.push(a[l]+i);W.S.push(a[l+1]+n)}for(var l=0;l<S.cmds.length;l++)W.J.push(S.cmds[l]);
-i+=N.ax;n+=N.ay}return{cmds:W.J,crds:W.S}},codeToGlyph:function(v,h){var W=v.cmap,i=-1,n=["p0e4","p3e1","p1e0","p0e3"];
-for(var L=0;L<n.length;L++)if(W.N[n[L]]!=null){i=W.N[n[L]];break}if(i==-1)throw"no familiar platform and encoding!";
-var N=function(b,U,d){var e=0,t=Math.floor(b.length/U);while(e+1!=t){var M=e+(t-e>>>1);if(b[M*U]<=d)e=M;
-else t=M}return e*U},S=W.R[i],a=S.vp,l=-1;if(a==0){if(h>=S.map.length)l=0;else l=S.map[h]}else if(a==4){var J=-1,A=S.vA;
-if(h>A[A.length-1])J=-1;else{J=N(A,1,h);if(A[J]<h)J++}if(J==-1)l=0;else if(h<S.vW[J])l=0;else{var u=0;
-if(S.T[J]!=0)u=S.r[h-S.vW[J]+(S.T[J]>>1)-(S.T.length-J)];else u=h+S.hn[J];l=u&65535}}else if(a==12){var s=S.vs;
-if(h>s[s.length-2])l=0;else{var L=N(s,3,h);if(s[L]<=h&&h<=s[L+1]){l=s[L+2]+(h-s[L])}if(l==-1)l=0}}else throw"unknown cmap table format "+S.vp;
-var B=v["SVG "],m=v.loca;if(l!=0&&v["CFF "]==null&&(B==null||B.entries[l]==null)&&m[l]==m[l+1]&&[9,10,11,12,13,32,133,160,5760,8232,8233,8239,12288,6158,8203,8204,8205,8288,65279].indexOf(h)==-1&&!(8192<=h&&h<=8202))l=0;
-return l},glyphToPath:function(v,h){var W={J:[],S:[]},i=v["SVG "],n=v["CFF "],L=$.U;if(i&&i.entries[h]){var N=i.entries[h];
-if(N!=null){if(typeof N=="string"){N=L.SVG.hL(N);i.entries[h]=N}W=N}}else if(n){var S=n.Private,a={x:0,y:0,stack:[],G:0,Q:!1,width:S?S.defaultWidthX:0,open:!1};
-if(n.ROS){var l=0;while(n.FDSelect[l+2]<=h)l+=2;S=n.FDArray[n.FDSelect[l+1]].Private}L._drawCFF(n.CharStrings[h],a,n,S,W)}else if(v.glyf){L._drawGlyf(h,v,W)}return{cmds:W.J,crds:W.S}},_drawGlyf:function(v,h,W){var i=h.glyf[v];
-if(i==null)i=h.glyf[v]=$.T.a.vJ(h,v);if(i!=null){if(i.g>-1)$.U._simpleGlyph(i,W);else $.U._compoGlyph(i,h,W)}},_simpleGlyph:function(v,h){var W=$.U.P;
-for(var i=0;i<v.g;i++){var n=i==0?0:v.s[i-1]+1,L=v.s[i];for(var N=n;N<=L;N++){var S=N==n?L:N-1,a=N==L?n:N+1,l=v.I[N]&1,J=v.I[S]&1,A=v.I[a]&1,u=v.v[N],s=v.$[N];
-if(N==n){if(l){if(J)W.j(h,v.v[S],v.$[S]);else{W.j(h,u,s);continue}}else{if(J)W.j(h,v.v[S],v.$[S]);else W.j(h,Math.floor((v.v[S]+u)*.5),Math.floor((v.$[S]+s)*.5))}}if(l){if(J)W.F(h,u,s)}else{if(A)W.ha(h,u,s,v.v[a],v.$[a]);
-else W.ha(h,u,s,Math.floor((u+v.v[a])*.5),Math.floor((s+v.$[a])*.5))}}W.c(h)}},_compoGlyph:function(v,h,W){for(var i=0;
-i<v.q.length;i++){var n={J:[],S:[]},L=v.q[i];$.U._drawGlyf(L.vT,h,n);var N=L.m;for(var S=0;S<n.S.length;
-S+=2){var a=n.S[S],l=n.S[S+1];W.S.push(a*N.B+l*N.vi+N.vF);W.S.push(a*N.vN+l*N._+N.vu)}for(var S=0;S<n.J.length;
-S++)W.J.push(n.J[S])}},pathToSVG:function(v,h){var W=v.cmds,i=v.crds,L=0;if(h==null)h=5;var n=[],N={M:2,L:2,Q:4,C:6};
-for(var S=0;S<W.length;S++){var a=W[S],l=L+(N[a]?N[a]:0);n.push(a);while(L<l){var J=i[L++];n.push(parseFloat(J.toFixed(h))+(L==l?"":" "))}}return n.join("")},SVGToPath:function(v){var h=$.U.SVG,W={J:[],S:[]},i=h.vx(v);
-h.vC(i,W);return{cmds:W.J,crds:W.S}},pathToContext:function(v,h){var W=0,i=v.cmds,n=v.crds;for(var L=0;
-L<i.length;L++){var N=i[L];if(N=="M"){h.moveTo(n[W],n[W+1]);W+=2}else if(N=="L"){h.lineTo(n[W],n[W+1]);
-W+=2}else if(N=="C"){h.bezierCurveTo(n[W],n[W+1],n[W+2],n[W+3],n[W+4],n[W+5]);W+=6}else if(N=="Q"){h.quadraticCurveTo(n[W],n[W+1],n[W+2],n[W+3]);
-W+=4}else if(N.charAt(0)=="#"){h.beginPath();h.fillStyle=N}else if(N=="Z"){h.closePath()}else if(N=="X"){h.fill()}}},P:{j:function(v,h,W){v.J.push("M");
-v.S.push(h,W)},F:function(v,h,W){v.J.push("L");v.S.push(h,W)},d:function(v,h,W,i,n,L,N){v.J.push("C");
-v.S.push(h,W,i,n,L,N)},ha:function(v,h,W,i,n){v.J.push("Q");v.S.push(h,W,i,n)},c:function(v){v.J.push("Z")}},_drawCFF:function(v,h,W,i,n){var L=h.stack,N=h.G,S=h.Q,a=h.width,l=h.open,J=0,A=h.x,u=h.y,s=0,B=0,m=0,b=0,U=0,d=0,e=0,t=0,M=0,z=0,X=$.T.u,G=$.U.P,R=i.nominalWidthX,_={vD:0,size:0};
-while(J<v.length){X.vj(v,J,_);var k=_.vD;J+=_.size;if(!1){}else if(k=="o1"||k=="o18"){var D;D=L.length%2!==0;
-if(D&&!S){a=L.shift()+R}N+=L.length>>1;L.length=0;S=!0}else if(k=="o3"||k=="o23"){var D;D=L.length%2!==0;
-if(D&&!S){a=L.shift()+R}N+=L.length>>1;L.length=0;S=!0}else if(k=="o4"){if(L.length>1&&!S){a=L.shift()+R;
-S=!0}if(l)G.c(n);u+=L.pop();G.j(n,A,u);l=!0}else if(k=="o5"){while(L.length>0){A+=L.shift();u+=L.shift();
-G.F(n,A,u)}}else if(k=="o6"||k=="o7"){var F=L.length,Q=k=="o6";for(var I=0;I<F;I++){var g=L.shift();
-if(Q)A+=g;else u+=g;Q=!Q;G.F(n,A,u)}}else if(k=="o8"||k=="o24"){var F=L.length,o=0;while(o+6<=F){s=A+L.shift();
-B=u+L.shift();m=s+L.shift();b=B+L.shift();A=m+L.shift();u=b+L.shift();G.d(n,s,B,m,b,A,u);o+=6}if(k=="o24"){A+=L.shift();
-u+=L.shift();G.F(n,A,u)}}else if(k=="o11")break;else if(k=="o1234"||k=="o1235"||k=="o1236"||k=="o1237"){if(k=="o1234"){s=A+L.shift();
-B=u;m=s+L.shift();b=B+L.shift();M=m+L.shift();z=b;U=M+L.shift();d=b;e=U+L.shift();t=u;A=e+L.shift();
-G.d(n,s,B,m,b,M,z);G.d(n,U,d,e,t,A,u)}if(k=="o1235"){s=A+L.shift();B=u+L.shift();m=s+L.shift();b=B+L.shift();
-M=m+L.shift();z=b+L.shift();U=M+L.shift();d=z+L.shift();e=U+L.shift();t=d+L.shift();A=e+L.shift();u=t+L.shift();
-L.shift();G.d(n,s,B,m,b,M,z);G.d(n,U,d,e,t,A,u)}if(k=="o1236"){s=A+L.shift();B=u+L.shift();m=s+L.shift();
-b=B+L.shift();M=m+L.shift();z=b;U=M+L.shift();d=b;e=U+L.shift();t=d+L.shift();A=e+L.shift();G.d(n,s,B,m,b,M,z);
-G.d(n,U,d,e,t,A,u)}if(k=="o1237"){s=A+L.shift();B=u+L.shift();m=s+L.shift();b=B+L.shift();M=m+L.shift();
-z=b+L.shift();U=M+L.shift();d=z+L.shift();e=U+L.shift();t=d+L.shift();if(Math.abs(e-A)>Math.abs(t-u)){A=e+L.shift()}else{u=t+L.shift()}G.d(n,s,B,m,b,M,z);
-G.d(n,U,d,e,t,A,u)}}else if(k=="o14"){if(L.length>0&&!S){a=L.shift()+W.nominalWidthX;S=!0}if(L.length==4){var c=0,w=L.shift(),P=L.shift(),vm=L.shift(),vW=L.shift(),vn=X.w(W,vm),Y=X.w(W,vW);
-$.U._drawCFF(W.CharStrings[vn],h,W,i,n);h.x=w;h.y=P;$.U._drawCFF(W.CharStrings[Y],h,W,i,n)}if(l){G.c(n);
-l=!1}}else if(k=="o19"||k=="o20"){var D;D=L.length%2!==0;if(D&&!S){a=L.shift()+R}N+=L.length>>1;L.length=0;
-S=!0;J+=N+7>>3}else if(k=="o21"){if(L.length>2&&!S){a=L.shift()+R;S=!0}u+=L.pop();A+=L.pop();if(l)G.c(n);
-G.j(n,A,u);l=!0}else if(k=="o22"){if(L.length>1&&!S){a=L.shift()+R;S=!0}A+=L.pop();if(l)G.c(n);G.j(n,A,u);
-l=!0}else if(k=="o25"){while(L.length>6){A+=L.shift();u+=L.shift();G.F(n,A,u)}s=A+L.shift();B=u+L.shift();
-m=s+L.shift();b=B+L.shift();A=m+L.shift();u=b+L.shift();G.d(n,s,B,m,b,A,u)}else if(k=="o26"){if(L.length%2){A+=L.shift()}while(L.length>0){s=A;
-B=u+L.shift();m=s+L.shift();b=B+L.shift();A=m;u=b+L.shift();G.d(n,s,B,m,b,A,u)}}else if(k=="o27"){if(L.length%2){u+=L.shift()}while(L.length>0){s=A+L.shift();
-B=u;m=s+L.shift();b=B+L.shift();A=m+L.shift();u=b;G.d(n,s,B,m,b,A,u)}}else if(k=="o10"||k=="o29"){var Z=k=="o10"?i:W;
-if(L.length==0){console.log("error: empty stack")}else{var vN=L.pop(),vJ=Z.Subrs[vN+Z.Bias];h.x=A;h.y=u;
-h.G=N;h.Q=S;h.width=a;h.open=l;$.U._drawCFF(vJ,h,W,i,n);A=h.x;u=h.y;N=h.G;S=h.Q;a=h.width;l=h.open}}else if(k=="o30"||k=="o31"){var F,K=L.length,o=0,C=k=="o31";
-F=K&~2;o+=K-F;while(o<F){if(C){s=A+L.shift();B=u;m=s+L.shift();b=B+L.shift();u=b+L.shift();if(F-o==5){A=m+L.shift();
-o++}else A=m;C=!1}else{s=A;B=u+L.shift();m=s+L.shift();b=B+L.shift();A=m+L.shift();if(F-o==5){u=b+L.shift();
-o++}else u=b;C=!0}G.d(n,s,B,m,b,A,u);o+=4}}else if((k+"").charAt(0)=="o"){console.log("Unknown operation: "+k,v);
-throw k}else L.push(k)}h.x=A;h.y=u;h.G=N;h.Q=S;h.width=a;h.open=l},SVG:{hL:function(v){var h={J:[],S:[]};
-if(v==null)return h;var W=new DOMParser,i=W.parseFromString(v,"image/svg+xml"),n=i.firstChild;while(n.tagName!="svg")n=n.nextSibling;
-var L=n.getAttribute("viewBox");if(L)L=L.trim().split(" ").map(parseFloat);else L=[0,0,1e3,1e3];$.U.SVG.vn(n.children,h);
-for(var N=0;N<h.S.length;N+=2){var S=h.S[N],a=h.S[N+1];S-=L[0];a-=L[1];a=-a;h.S[N]=S;h.S[N+1]=a}return h},vn:function(v,h,W){for(var i=0;
-i<v.length;i++){var n=v[i],L=n.tagName,N=n.getAttribute("fill");if(N==null)N=W;if(L=="g")$.U.SVG.vn(n.children,h,N);
-else if(L=="path"){h.J.push(N?N:"#000000");var S=n.getAttribute("d"),a=$.U.SVG.vx(S);$.U.SVG.vC(a,h);
-h.J.push("X")}else if(L=="defs"){}else console.log(L,n)}},vx:function(v){var h=[],W=0,i=!1,n="",L="";
-while(W<v.length){var N=v.charCodeAt(W),S=v.charAt(W);W++;var a=48<=N&&N<=57||S=="."||S=="-"||S=="e";
-if(i){if(S=="-"&&L!="e"||S=="."&&n.indexOf(".")!=-1){h.push(parseFloat(n));n=S}else if(a)n+=S;else{h.push(parseFloat(n));
-if(S!=","&&S!=" ")h.push(S);i=!1}}else{if(a){n=S;i=!0}else if(S!=","&&S!=" ")h.push(S)}L=S}if(i)h.push(parseFloat(n));
-return h},vC:function(v,h){var W=0,n=0,L=0,N=0,S=0,a={M:2,L:2,H:1,V:1,T:2,S:4,A:7,Q:4,C:6},l=h.J,J=h.S;
-while(W<v.length){var A=v[W];W++;var u=A.toUpperCase();if(u=="Z"){l.push("Z");n=N;L=S}else{var s=a[u],B=$.U.SVG.hN(v,W,s);
-for(var m=0;m<B;m++){if(m==1&&u=="M"){A=A==u?"L":"l";u="L"}var b=0,U=0;if(A!=u){b=n;U=L}if(!1){}else if(u=="M"){n=b+v[W++];
-L=U+v[W++];l.push("M");J.push(n,L);N=n;S=L}else if(u=="L"){n=b+v[W++];L=U+v[W++];l.push("L");J.push(n,L)}else if(u=="H"){n=b+v[W++];
-l.push("L");J.push(n,L)}else if(u=="V"){L=U+v[W++];l.push("L");J.push(n,L)}else if(u=="Q"){var d=b+v[W++],e=U+v[W++],t=b+v[W++],M=U+v[W++];
-l.push("Q");J.push(d,e,t,M);n=t;L=M}else if(u=="T"){var z=Math.max(J.length-2,0),d=n+n-J[z],e=L+L-J[z+1],t=b+v[W++],M=U+v[W++];
-l.push("Q");J.push(d,e,t,M);n=t;L=M}else if(u=="C"){var d=b+v[W++],e=U+v[W++],t=b+v[W++],M=U+v[W++],X=b+v[W++],G=U+v[W++];
-l.push("C");J.push(d,e,t,M,X,G);n=X;L=G}else if(u=="S"){var z=Math.max(J.length-4,0),d=n+n-J[z],e=L+L-J[z+1],t=b+v[W++],M=U+v[W++],X=b+v[W++],G=U+v[W++];
-l.push("C");J.push(d,e,t,M,X,G);n=X;L=G}else if(u=="A"){var d=n,e=L,R=v[W++],_=v[W++],k=v[W++]*(Math.PI/180),D=v[W++],F=v[W++],t=b+v[W++],M=U+v[W++];
-if(t==n&&M==L&&R==0&&_==0)continue;var Q=(d-t)/2,O=(e-M)/2,I=Math.cos(k),g=Math.sin(k),o=I*Q+g*O,c=-g*Q+I*O,w=R*R,P=_*_,vm=o*o,vW=c*c,ve=(w*P-w*vW-P*vm)/(w*vW+P*vm),vn=(D!=F?1:-1)*Math.sqrt(Math.max(ve,0)),Y=vn*(R*c)/_,Z=-vn*(_*o)/R,vN=I*Y-g*Z+(d+t)/2,vJ=g*Y+I*Z+(e+M)/2,K=function(T,q,f,V){var vi=Math.sqrt(T*T+q*q),p=Math.sqrt(f*f+V*V),vB=(T*f+q*V)/(vi*p);
-return(T*V-q*f>=0?1:-1)*Math.acos(Math.max(-1,Math.min(1,vB)))},vu=(o-Y)/R,C=(c-Z)/_,vb=K(1,0,vu,C),vA=K(vu,C,(-o-Y)/R,(-c-Z)/_);
-vA=vA%(2*Math.PI);var vv=function(vs,n,L,T,q,f,V){var vi=function(H,E){var vh=Math.sin(E),z=Math.cos(E),E=H[0],v$=H[1],vU=H[2],vd=H[3];
-H[0]=E*z+v$*vh;H[1]=-E*vh+v$*z;H[2]=vU*z+vd*vh;H[3]=-vU*vh+vd*z},p=function(H,E){for(var m=0;m<E.length;
-m+=2){var n=E[m],L=E[m+1];E[m]=H[0]*n+H[2]*L+H[4];E[m+1]=H[1]*n+H[3]*L+H[5]}},vB=function(H,E){for(var m=0;
-m<E.length;m++)H.push(E[m])},vl=function(H,T){vB(H.J,T.J);vB(H.S,T.S)};if(V)while(f>q)f-=2*Math.PI;else while(f<q)f+=2*Math.PI;
-var vL=(f-q)/4,vS=Math.cos(vL/2),va=-Math.sin(vL/2),d=(4-vS)/3,e=va==0?va:(1-vS)*(3-vS)/(3*va),t=d,M=-e,X=vS,G=-va,s=[d,e,t,M,X,G],h={J:["C","C","C","C"],S:s.slice(0)},r=[1,0,0,1,0,0];
-vi(r,-vL);for(var m=0;m<3;m++){p(r,s);vB(h.S,s)}vi(r,-q+vL/2);r[0]*=T;r[1]*=T;r[2]*=T;r[3]*=T;r[4]=n;
-r[5]=L;p(r,h.S);p(vs.vK,h.S);vl(vs.vf,h)},vs={vf:h,vK:[R*I,R*g,-_*g,_*I,vN,vJ]};vv(vs,0,0,1,vb,vb+vA,F==0);
-n=t;L=M}else console.log("Unknown SVG command "+A)}}}},hN:function(v,h,W){var i=h;while(i<v.length){if(typeof v[i]=="string")break;
-i+=W}return(i-h)/W}}};return $}()
+
+
+var Typr = {};
+
+Typr.parse = function(buff)
+{
+	var bin = Typr._bin;
+	var data = new Uint8Array(buff);
+	
+	var tag = bin.readASCII(data, 0, 4);  
+	if(tag=="ttcf") {
+		var offset = 4;
+		var majV = bin.readUshort(data, offset);  offset+=2;
+		var minV = bin.readUshort(data, offset);  offset+=2;
+		var numF = bin.readUint  (data, offset);  offset+=4;
+		var fnts = [];
+		for(var i=0; i<numF; i++) {
+			var foff = bin.readUint  (data, offset);  offset+=4;
+			fnts.push(Typr._readFont(data, foff));
+		}
+		return fnts;
+	}
+	else return [Typr._readFont(data, 0)];
+}
+
+Typr._readFont = function(data, offset) {
+	var bin = Typr._bin;
+	var ooff = offset;
+	
+	var sfnt_version = bin.readFixed(data, offset);
+	offset += 4;
+	var numTables = bin.readUshort(data, offset);
+	offset += 2;
+	var searchRange = bin.readUshort(data, offset);
+	offset += 2;
+	var entrySelector = bin.readUshort(data, offset);
+	offset += 2;
+	var rangeShift = bin.readUshort(data, offset);
+	offset += 2;
+	
+	var tags = [
+		"cmap",
+		"DSIG",
+		"head",
+		"hhea",
+		"maxp",
+		"hmtx",
+		"name",
+		"OS/2",
+		"post",
+		
+		//"cvt",
+		//"fpgm",
+		"loca",
+		"glyf",
+		"kern",
+		
+		//"prep"
+		//"gasp"
+		
+		"CFF ",
+		
+		
+		"GPOS",
+		"GSUB",
+		
+		"SVG "
+		//"VORG",
+		];
+	
+	var obj = {_data:data, _offset:ooff};
+	//console.log(sfnt_version, numTables, searchRange, entrySelector, rangeShift);
+	
+	var tabs = {};
+	
+	for(var i=0; i<numTables; i++)
+	{
+		var tag = bin.readASCII(data, offset, 4);   offset += 4;
+		var checkSum = bin.readUint(data, offset);  offset += 4;
+		var toffset = bin.readUint(data, offset);   offset += 4;
+		var length = bin.readUint(data, offset);    offset += 4;
+		tabs[tag] = {offset:toffset, length:length};
+		
+		//if(tags.indexOf(tag)==-1) console.log("unknown tag", tag, length);
+	}
+	
+	for(var i=0; i< tags.length; i++)
+	{
+		var t = tags[i];
+		//console.log(t);
+		//if(tabs[t]) console.log(t, tabs[t].offset, tabs[t].length);
+		if(tabs[t]) {
+			var off = tabs[t].offset,  len = tabs[t].length;
+			if(t=="GSUB") {
+				//console.log(t, off, len);
+				//for(var j=0; j<len; j+=2) {  if(bin.readUshort(data,off+j)==932) {  console.log(off+j);  throw "e";  }  }
+			}
+			obj[t.trim()] = Typr[t.trim()].parse(data, tabs[t].offset, tabs[t].length, obj);
+		}
+	}
+	
+	return obj;
+}
+
+Typr._tabOffset = function(data, tab, foff)
+{
+	var bin = Typr._bin;
+	var numTables = bin.readUshort(data, foff+4);
+	var offset = foff+12;
+	for(var i=0; i<numTables; i++)
+	{
+		var tag = bin.readASCII(data, offset, 4);   offset += 4;
+		var checkSum = bin.readUint(data, offset);  offset += 4;
+		var toffset = bin.readUint(data, offset);   offset += 4;
+		var length = bin.readUint(data, offset);    offset += 4;
+		if(tag==tab) return toffset;
+	}
+	return 0;
+}
+
+
+
+
+
+Typr._bin = {
+	readFixed : function(data, o)
+	{
+		return ((data[o]<<8) | data[o+1]) +  (((data[o+2]<<8)|data[o+3])/(256*256+4));
+	},
+	readF2dot14 : function(data, o)
+	{
+		var num = Typr._bin.readShort(data, o);
+		return num / 16384;
+	},
+	readInt : function(buff, p)
+	{
+		//if(p>=buff.length) throw "error";
+		var a = Typr._bin.t.uint8;
+		a[0] = buff[p+3];
+		a[1] = buff[p+2];
+		a[2] = buff[p+1];
+		a[3] = buff[p];
+		return Typr._bin.t.int32[0];
+	},
+	
+	readInt8 : function(buff, p)
+	{
+		//if(p>=buff.length) throw "error";
+		var a = Typr._bin.t.uint8;
+		a[0] = buff[p];
+		return Typr._bin.t.int8[0];
+	},
+	readShort : function(buff, p)
+	{
+		//if(p>=buff.length) throw "error";
+		var a = Typr._bin.t.uint8;
+		a[1] = buff[p]; a[0] = buff[p+1];
+		return Typr._bin.t.int16[0];
+	},
+	readUshort : function(buff, p)
+	{
+		//if(p>=buff.length) throw "error";
+		return (buff[p]<<8) | buff[p+1];
+	},
+	readUshorts : function(buff, p, len)
+	{
+		var arr = [];
+		for(var i=0; i<len; i++) {
+			var v = Typr._bin.readUshort(buff, p+i*2);  //if(v==932) console.log(p+i*2);
+			arr.push(v);
+		}
+		return arr;
+	},
+	readUint : function(buff, p)
+	{
+		//if(p>=buff.length) throw "error";
+		var a = Typr._bin.t.uint8;
+		a[3] = buff[p];  a[2] = buff[p+1];  a[1] = buff[p+2];  a[0] = buff[p+3];
+		return Typr._bin.t.uint32[0];
+	},
+	readUint64 : function(buff, p)
+	{
+		//if(p>=buff.length) throw "error";
+		return (Typr._bin.readUint(buff, p)*(0xffffffff+1)) + Typr._bin.readUint(buff, p+4);
+	},
+	readASCII : function(buff, p, l)	// l : length in Characters (not Bytes)
+	{
+		//if(p>=buff.length) throw "error";
+		var s = "";
+		for(var i = 0; i < l; i++) s += String.fromCharCode(buff[p+i]);
+		return s;
+	},
+	readUnicode : function(buff, p, l)
+	{
+		//if(p>=buff.length) throw "error";
+		var s = "";
+		for(var i = 0; i < l; i++)	
+		{
+			var c = (buff[p++]<<8) | buff[p++];
+			s += String.fromCharCode(c);
+		}
+		return s;
+	},
+	_tdec : window["TextDecoder"] ? new window["TextDecoder"]() : null,
+	readUTF8 : function(buff, p, l) {
+		var tdec = Typr._bin._tdec;
+		if(tdec && p==0 && l==buff.length) return tdec["decode"](buff);
+		return Typr._bin.readASCII(buff,p,l);
+	},
+	readBytes : function(buff, p, l)
+	{
+		//if(p>=buff.length) throw "error";
+		var arr = [];
+		for(var i=0; i<l; i++) arr.push(buff[p+i]);
+		return arr;
+	},
+	readASCIIArray : function(buff, p, l)	// l : length in Characters (not Bytes)
+	{
+		//if(p>=buff.length) throw "error";
+		var s = [];
+		for(var i = 0; i < l; i++)	
+			s.push(String.fromCharCode(buff[p+i]));
+		return s;
+	}
+};
+
+Typr._bin.t = {
+	buff: new ArrayBuffer(8),
+};
+Typr._bin.t.int8   = new Int8Array  (Typr._bin.t.buff);
+Typr._bin.t.uint8  = new Uint8Array (Typr._bin.t.buff);
+Typr._bin.t.int16  = new Int16Array (Typr._bin.t.buff);
+Typr._bin.t.uint16 = new Uint16Array(Typr._bin.t.buff);
+Typr._bin.t.int32  = new Int32Array (Typr._bin.t.buff);
+Typr._bin.t.uint32 = new Uint32Array(Typr._bin.t.buff);
+
+
+
+
+
+// OpenType Layout Common Table Formats
+
+Typr._lctf = {};
+
+Typr._lctf.parse = function(data, offset, length, font, subt)
+{
+	var bin = Typr._bin;
+	var obj = {};
+	var offset0 = offset;
+	var tableVersion = bin.readFixed(data, offset);  offset += 4;
+	
+	var offScriptList  = bin.readUshort(data, offset);  offset += 2;
+	var offFeatureList = bin.readUshort(data, offset);  offset += 2;
+	var offLookupList  = bin.readUshort(data, offset);  offset += 2;
+	
+	
+	obj.scriptList  = Typr._lctf.readScriptList (data, offset0 + offScriptList);
+	obj.featureList = Typr._lctf.readFeatureList(data, offset0 + offFeatureList);
+	obj.lookupList  = Typr._lctf.readLookupList (data, offset0 + offLookupList, subt);
+	
+	return obj;
+}
+
+Typr._lctf.readLookupList = function(data, offset, subt)
+{
+	var bin = Typr._bin;
+	var offset0 = offset;
+	var obj = [];
+	var count = bin.readUshort(data, offset);  offset+=2;
+	for(var i=0; i<count; i++) 
+	{
+		var noff = bin.readUshort(data, offset);  offset+=2;
+		var lut = Typr._lctf.readLookupTable(data, offset0 + noff, subt);
+		obj.push(lut);
+	}
+	return obj;
+}
+
+Typr._lctf.readLookupTable = function(data, offset, subt)
+{
+	//console.log("Parsing lookup table", offset);
+	var bin = Typr._bin;
+	var offset0 = offset;
+	var obj = {tabs:[]};
+	
+	obj.ltype = bin.readUshort(data, offset);  offset+=2;
+	obj.flag  = bin.readUshort(data, offset);  offset+=2;
+	var cnt   = bin.readUshort(data, offset);  offset+=2;
+	
+	var ntype;
+	for(var i=0; i<cnt; i++)
+	{
+		var noff = bin.readUshort(data, offset);  offset+=2;
+		var tab = subt(data, obj.ltype, offset0 + noff);
+		//console.log(obj.ltype, tab?tab[0]:null);
+		obj.tabs.push(tab?tab[0]:null);
+		if(tab && tab[1]!=null) ntype = tab[1];
+	}
+	if(ntype!=null) obj.ltype = ntype;
+	return obj;
+}
+
+Typr._lctf.numOfOnes = function(n)
+{
+	var num = 0;
+	for(var i=0; i<32; i++) if(((n>>>i)&1) != 0) num++;
+	return num;
+}
+
+Typr._lctf.readClassDef = function(data, offset)
+{
+	var bin = Typr._bin;
+	var obj = [];
+	var format = bin.readUshort(data, offset);  offset+=2;
+	if(format==1) 
+	{
+		var startGlyph  = bin.readUshort(data, offset);  offset+=2;
+		var glyphCount  = bin.readUshort(data, offset);  offset+=2;
+		for(var i=0; i<glyphCount; i++)
+		{
+			obj.push(startGlyph+i);
+			obj.push(startGlyph+i);
+			obj.push(bin.readUshort(data, offset));  offset+=2;
+		}
+	}
+	if(format==2)
+	{
+		var count = bin.readUshort(data, offset);  offset+=2;
+		for(var i=0; i<count; i++)
+		{
+			obj.push(bin.readUshort(data, offset));  offset+=2;
+			obj.push(bin.readUshort(data, offset));  offset+=2;
+			obj.push(bin.readUshort(data, offset));  offset+=2;
+		}
+	}
+	return obj;
+}
+Typr._lctf.getInterval = function(tab, val)
+{
+	for(var i=0; i<tab.length; i+=3)
+	{
+		var start = tab[i], end = tab[i+1], index = tab[i+2];
+		if(start<=val && val<=end) return i;
+	}
+	return -1;
+}
+
+
+Typr._lctf.readCoverage = function(data, offset)
+{
+	var bin = Typr._bin;
+	var cvg = {};
+	cvg.fmt   = bin.readUshort(data, offset);  offset+=2;
+	var count = bin.readUshort(data, offset);  offset+=2;  ///  if(count==0) throw "e";  count==0 can happen in GSUB ... e.g. Andika "2"
+	//console.log("parsing coverage", offset-4, format, count);
+	if(cvg.fmt==1) cvg.tab = bin.readUshorts(data, offset, count); 
+	if(cvg.fmt==2) cvg.tab = bin.readUshorts(data, offset, count*3);
+	return cvg;
+}
+
+Typr._lctf.coverageIndex = function(cvg, val)
+{
+	var tab = cvg.tab;
+	if(cvg.fmt==1) return tab.indexOf(val);
+	if(cvg.fmt==2) {
+		var ind = Typr._lctf.getInterval(tab, val);
+		if(ind!=-1) return tab[ind+2] + (val - tab[ind]);
+	}
+	return -1;
+}
+
+Typr._lctf.readFeatureList = function(data, offset)
+{
+	var bin = Typr._bin;
+	var offset0 = offset;
+	var obj = [];
+	
+	var count = bin.readUshort(data, offset);  offset+=2;
+	
+	for(var i=0; i<count; i++)
+	{
+		var tag = bin.readASCII(data, offset, 4);  offset+=4;
+		var noff = bin.readUshort(data, offset);  offset+=2;
+		obj.push({tag: tag.trim(), tab:Typr._lctf.readFeatureTable(data, offset0 + noff)});
+	}
+	return obj;
+}
+
+Typr._lctf.readFeatureTable = function(data, offset)
+{
+	var bin = Typr._bin;
+	
+	var featureParams = bin.readUshort(data, offset);  offset+=2;	// = 0
+	var lookupCount = bin.readUshort(data, offset);  offset+=2;
+	
+	var indices = [];
+	for(var i=0; i<lookupCount; i++) indices.push(bin.readUshort(data, offset+2*i));
+	return indices;
+}
+
+
+Typr._lctf.readScriptList = function(data, offset)
+{
+	var bin = Typr._bin;
+	var offset0 = offset;
+	var obj = {};
+	
+	var count = bin.readUshort(data, offset);  offset+=2;
+	
+	for(var i=0; i<count; i++)
+	{
+		var tag = bin.readASCII(data, offset, 4);  offset+=4;
+		var noff = bin.readUshort(data, offset);  offset+=2;
+		obj[tag.trim()] = Typr._lctf.readScriptTable(data, offset0 + noff);
+	}
+	return obj;
+}
+
+Typr._lctf.readScriptTable = function(data, offset)
+{
+	var bin = Typr._bin;
+	var offset0 = offset;
+	var obj = {};
+	
+	var defLangSysOff = bin.readUshort(data, offset);  offset+=2;
+	obj.default = Typr._lctf.readLangSysTable(data, offset0 + defLangSysOff);
+	
+	var langSysCount = bin.readUshort(data, offset);  offset+=2;
+	
+	for(var i=0; i<langSysCount; i++)
+	{
+		var tag = bin.readASCII(data, offset, 4);  offset+=4;
+		var langSysOff = bin.readUshort(data, offset);  offset+=2;
+		obj[tag.trim()] = Typr._lctf.readLangSysTable(data, offset0 + langSysOff);
+	}
+	return obj;
+}
+
+Typr._lctf.readLangSysTable = function(data, offset)
+{
+	var bin = Typr._bin;
+	var obj = {};
+	
+	var lookupOrder = bin.readUshort(data, offset);  offset+=2;
+	//if(lookupOrder!=0)  throw "lookupOrder not 0";
+	obj.reqFeature = bin.readUshort(data, offset);  offset+=2;
+	//if(obj.reqFeature != 0xffff) throw "reqFeatureIndex != 0xffff";
+	
+	//console.log(lookupOrder, obj.reqFeature);
+	
+	var featureCount = bin.readUshort(data, offset);  offset+=2;
+	obj.features = bin.readUshorts(data, offset, featureCount);
+	return obj;
+}
+
+	Typr.CFF = {};
+	Typr.CFF.parse = function(data, offset, length)
+	{
+		var bin = Typr._bin;
+		
+		data = new Uint8Array(data.buffer, offset, length);
+		offset = 0;
+		
+		// Header
+		var major = data[offset];  offset++;
+		var minor = data[offset];  offset++;
+		var hdrSize = data[offset];  offset++;
+		var offsize = data[offset];  offset++;
+		//console.log(major, minor, hdrSize, offsize);
+		
+		// Name INDEX
+		var ninds = [];
+		offset = Typr.CFF.readIndex(data, offset, ninds);
+		var names = [];
+		
+		for(var i=0; i<ninds.length-1; i++) names.push(bin.readASCII(data, offset+ninds[i], ninds[i+1]-ninds[i]));
+		offset += ninds[ninds.length-1];
+		
+		
+		// Top DICT INDEX
+		var tdinds = [];
+		offset = Typr.CFF.readIndex(data, offset, tdinds);  //console.log(tdinds);
+		// Top DICT Data
+		var topDicts = [];
+		for(var i=0; i<tdinds.length-1; i++) topDicts.push( Typr.CFF.readDict(data, offset+tdinds[i], offset+tdinds[i+1]) );
+		offset += tdinds[tdinds.length-1];
+		var topdict = topDicts[0];
+		//console.log(topdict);
+		
+		// String INDEX
+		var sinds = [];
+		offset = Typr.CFF.readIndex(data, offset, sinds);
+		// String Data
+		var strings = [];
+		for(var i=0; i<sinds.length-1; i++) strings.push(bin.readASCII(data, offset+sinds[i], sinds[i+1]-sinds[i]));
+		offset += sinds[sinds.length-1];
+		
+		// Global Subr INDEX  (subroutines)		
+		Typr.CFF.readSubrs(data, offset, topdict);
+		
+		// charstrings
+		if(topdict.CharStrings)
+		{
+			offset = topdict.CharStrings;
+			var sinds = [];
+			offset = Typr.CFF.readIndex(data, offset, sinds);
+			
+			var cstr = [];
+			for(var i=0; i<sinds.length-1; i++) cstr.push(bin.readBytes(data, offset+sinds[i], sinds[i+1]-sinds[i]));
+			//offset += sinds[sinds.length-1];
+			topdict.CharStrings = cstr;
+			//console.log(topdict.CharStrings);
+		}
+		
+		// CID font
+		if(topdict.ROS) {
+			offset = topdict.FDArray;
+			var fdind = [];
+			offset = Typr.CFF.readIndex(data, offset, fdind);
+			
+			topdict.FDArray = [];
+			for(var i=0; i<fdind.length-1; i++) {
+				var dict = Typr.CFF.readDict(data, offset+fdind[i], offset+fdind[i+1]);
+				Typr.CFF._readFDict(data, dict, strings);
+				topdict.FDArray.push( dict );
+			}
+			offset += fdind[fdind.length-1];
+			
+			offset = topdict.FDSelect;
+			topdict.FDSelect = [];
+			var fmt = data[offset];  offset++;
+			if(fmt==3) {
+				var rns = bin.readUshort(data, offset);  offset+=2;
+				for(var i=0; i<rns+1; i++) {
+					topdict.FDSelect.push(bin.readUshort(data, offset), data[offset+2]);  offset+=3;
+				}
+			}
+			else throw fmt;
+		}
+		
+		// Encoding
+		if(topdict.Encoding) topdict.Encoding = Typr.CFF.readEncoding(data, topdict.Encoding, topdict.CharStrings.length);
+		
+		// charset
+		if(topdict.charset ) topdict.charset  = Typr.CFF.readCharset (data, topdict.charset , topdict.CharStrings.length);
+		
+		Typr.CFF._readFDict(data, topdict, strings);
+		return topdict;
+	}
+	Typr.CFF._readFDict = function(data, dict, ss) {
+		var offset;
+		if(dict.Private) {
+			offset = dict.Private[1];
+			dict.Private = Typr.CFF.readDict(data, offset, offset+dict.Private[0]);
+			if(dict.Private.Subrs)  Typr.CFF.readSubrs(data, offset+dict.Private.Subrs, dict.Private);
+		}
+		for(var p in dict) if(["FamilyName","FontName","FullName","Notice","version","Copyright"].indexOf(p)!=-1)  dict[p]=ss[dict[p] -426 + 35];
+	}
+	
+	Typr.CFF.readSubrs = function(data, offset, obj)
+	{
+		var bin = Typr._bin;
+		var gsubinds = [];
+		offset = Typr.CFF.readIndex(data, offset, gsubinds);
+		
+		var bias, nSubrs = gsubinds.length;
+		if (false) bias = 0;
+		else if (nSubrs <  1240) bias = 107;
+		else if (nSubrs < 33900) bias = 1131;
+		else bias = 32768;
+		obj.Bias = bias;
+		
+		obj.Subrs = [];
+		for(var i=0; i<gsubinds.length-1; i++) obj.Subrs.push(bin.readBytes(data, offset+gsubinds[i], gsubinds[i+1]-gsubinds[i]));
+		//offset += gsubinds[gsubinds.length-1];
+	}
+	
+	Typr.CFF.tableSE = [
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      1,   2,   3,   4,   5,   6,   7,   8,
+      9,  10,  11,  12,  13,  14,  15,  16,
+     17,  18,  19,  20,  21,  22,  23,  24,
+     25,  26,  27,  28,  29,  30,  31,  32,
+     33,  34,  35,  36,  37,  38,  39,  40,
+     41,  42,  43,  44,  45,  46,  47,  48,
+     49,  50,  51,  52,  53,  54,  55,  56,
+     57,  58,  59,  60,  61,  62,  63,  64,
+     65,  66,  67,  68,  69,  70,  71,  72,
+     73,  74,  75,  76,  77,  78,  79,  80,
+     81,  82,  83,  84,  85,  86,  87,  88,
+     89,  90,  91,  92,  93,  94,  95,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0,  96,  97,  98,  99, 100, 101, 102,
+    103, 104, 105, 106, 107, 108, 109, 110,
+      0, 111, 112, 113, 114,   0, 115, 116,
+    117, 118, 119, 120, 121, 122,   0, 123,
+      0, 124, 125, 126, 127, 128, 129, 130,
+    131,   0, 132, 133,   0, 134, 135, 136,
+    137,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0, 138,   0, 139,   0,   0,   0,   0,
+    140, 141, 142, 143,   0,   0,   0,   0,
+      0, 144,   0,   0,   0, 145,   0,   0,
+    146, 147, 148, 149,   0,   0,   0,   0
+  ];
+  
+	Typr.CFF.glyphByUnicode = function(cff, code)
+	{
+		for(var i=0; i<cff.charset.length; i++) if(cff.charset[i]==code) return i;
+		return -1;
+	}
+	
+	Typr.CFF.glyphBySE = function(cff, charcode)	// glyph by standard encoding
+	{
+		if ( charcode < 0 || charcode > 255 ) return -1;
+		return Typr.CFF.glyphByUnicode(cff, Typr.CFF.tableSE[charcode]);		
+	}
+	
+	Typr.CFF.readEncoding = function(data, offset, num)
+	{
+		var bin = Typr._bin;
+		
+		var array = ['.notdef'];
+		var format = data[offset];  offset++;
+		//console.log("Encoding");
+		//console.log(format);
+		
+		if(format==0)
+		{
+			var nCodes = data[offset];  offset++;
+			for(var i=0; i<nCodes; i++)  array.push(data[offset+i]);
+		}
+		/*
+		else if(format==1 || format==2)
+		{
+			while(charset.length<num)
+			{
+				var first = bin.readUshort(data, offset);  offset+=2;
+				var nLeft=0;
+				if(format==1) {  nLeft = data[offset];  offset++;  }
+				else          {  nLeft = bin.readUshort(data, offset);  offset+=2;  }
+				for(var i=0; i<=nLeft; i++)  {  charset.push(first);  first++;  }
+			}
+		}
+		*/
+		else throw "error: unknown encoding format: " + format;
+		
+		return array;
+	}
+
+	Typr.CFF.readCharset = function(data, offset, num)
+	{
+		var bin = Typr._bin;
+		
+		var charset = ['.notdef'];
+		var format = data[offset];  offset++;
+		
+		if(format==0)
+		{
+			for(var i=0; i<num; i++) 
+			{
+				var first = bin.readUshort(data, offset);  offset+=2;
+				charset.push(first);
+			}
+		}
+		else if(format==1 || format==2)
+		{
+			while(charset.length<num)
+			{
+				var first = bin.readUshort(data, offset);  offset+=2;
+				var nLeft=0;
+				if(format==1) {  nLeft = data[offset];  offset++;  }
+				else          {  nLeft = bin.readUshort(data, offset);  offset+=2;  }
+				for(var i=0; i<=nLeft; i++)  {  charset.push(first);  first++;  }
+			}
+		}
+		else throw "error: format: " + format;
+		
+		return charset;
+	}
+
+	Typr.CFF.readIndex = function(data, offset, inds)
+	{
+		var bin = Typr._bin;
+		
+		var count = bin.readUshort(data, offset)+1;  offset+=2;
+		var offsize = data[offset];  offset++;
+		
+		if     (offsize==1) for(var i=0; i<count; i++) inds.push( data[offset+i] );
+		else if(offsize==2) for(var i=0; i<count; i++) inds.push( bin.readUshort(data, offset+i*2) );
+		else if(offsize==3) for(var i=0; i<count; i++) inds.push( bin.readUint  (data, offset+i*3 - 1) & 0x00ffffff );
+		else if(offsize==4) for(var i=0; i<count; i++) inds.push( bin.readUint  (data, offset+i*4) );
+		else if(count!=1) throw "unsupported offset size: " + offsize + ", count: " + count;
+		
+		offset += count*offsize;
+		return offset-1;
+	}
+	
+	Typr.CFF.getCharString = function(data, offset, o)
+	{
+		var bin = Typr._bin;
+		
+		var b0 = data[offset], b1 = data[offset+1], b2 = data[offset+2], b3 = data[offset+3], b4=data[offset+4];
+		var vs = 1;
+		var op=null, val=null;
+		// operand
+		if(b0<=20) { op = b0;  vs=1;  }
+		if(b0==12) { op = b0*100+b1;  vs=2;  }
+		//if(b0==19 || b0==20) { op = b0/*+" "+b1*/;  vs=2; }
+		if(21 <=b0 && b0<= 27) { op = b0;  vs=1; }
+		if(b0==28) { val = bin.readShort(data,offset+1);  vs=3; }
+		if(29 <=b0 && b0<= 31) { op = b0;  vs=1; }
+		if(32 <=b0 && b0<=246) { val = b0-139;  vs=1; }
+		if(247<=b0 && b0<=250) { val = (b0-247)*256+b1+108;  vs=2; }
+		if(251<=b0 && b0<=254) { val =-(b0-251)*256-b1-108;  vs=2; }
+		if(b0==255) {  val = bin.readInt(data, offset+1)/0xffff;  vs=5;   }
+		
+		o.val = val!=null ? val : "o"+op;
+		o.size = vs;
+	}
+	
+	Typr.CFF.readCharString = function(data, offset, length)
+	{
+		var end = offset + length;
+		var bin = Typr._bin;
+		var arr = [];
+		
+		while(offset<end)
+		{
+			var b0 = data[offset], b1 = data[offset+1], b2 = data[offset+2], b3 = data[offset+3], b4=data[offset+4];
+			var vs = 1;
+			var op=null, val=null;
+			// operand
+			if(b0<=20) { op = b0;  vs=1;  }
+			if(b0==12) { op = b0*100+b1;  vs=2;  }
+			if(b0==19 || b0==20) { op = b0/*+" "+b1*/;  vs=2; }
+			if(21 <=b0 && b0<= 27) { op = b0;  vs=1; }
+			if(b0==28) { val = bin.readShort(data,offset+1);  vs=3; }
+			if(29 <=b0 && b0<= 31) { op = b0;  vs=1; }
+			if(32 <=b0 && b0<=246) { val = b0-139;  vs=1; }
+			if(247<=b0 && b0<=250) { val = (b0-247)*256+b1+108;  vs=2; }
+			if(251<=b0 && b0<=254) { val =-(b0-251)*256-b1-108;  vs=2; }
+			if(b0==255) {  val = bin.readInt(data, offset+1)/0xffff;  vs=5;   }
+			
+			arr.push(val!=null ? val : "o"+op);
+			offset += vs;	
+
+			//var cv = arr[arr.length-1];
+			//if(cv==undefined) throw "error";
+			//console.log()
+		}	
+		return arr;
+	}
+
+	Typr.CFF.readDict = function(data, offset, end)
+	{
+		var bin = Typr._bin;
+		//var dict = [];
+		var dict = {};
+		var carr = [];
+		
+		while(offset<end)
+		{
+			var b0 = data[offset], b1 = data[offset+1], b2 = data[offset+2], b3 = data[offset+3], b4=data[offset+4];
+			var vs = 1;
+			var key=null, val=null;
+			// operand
+			if(b0==28) { val = bin.readShort(data,offset+1);  vs=3; }
+			if(b0==29) { val = bin.readInt  (data,offset+1);  vs=5; }
+			if(32 <=b0 && b0<=246) { val = b0-139;  vs=1; }
+			if(247<=b0 && b0<=250) { val = (b0-247)*256+b1+108;  vs=2; }
+			if(251<=b0 && b0<=254) { val =-(b0-251)*256-b1-108;  vs=2; }
+			if(b0==255) {  val = bin.readInt(data, offset+1)/0xffff;  vs=5;  throw "unknown number";  }
+			
+			if(b0==30) 
+			{  
+				var nibs = [];
+				vs = 1;
+				while(true)
+				{
+					var b = data[offset+vs];  vs++;
+					var nib0 = b>>4, nib1 = b&0xf;
+					if(nib0 != 0xf) nibs.push(nib0);  if(nib1!=0xf) nibs.push(nib1);
+					if(nib1==0xf) break;
+				}
+				var s = "";
+				var chars = [0,1,2,3,4,5,6,7,8,9,".","e","e-","reserved","-","endOfNumber"];
+				for(var i=0; i<nibs.length; i++) s += chars[nibs[i]];
+				//console.log(nibs);
+				val = parseFloat(s);
+			}
+			
+			if(b0<=21)	// operator
+			{
+				var keys = ["version", "Notice", "FullName", "FamilyName", "Weight", "FontBBox", "BlueValues", "OtherBlues", "FamilyBlues","FamilyOtherBlues",
+					"StdHW", "StdVW", "escape", "UniqueID", "XUID", "charset", "Encoding", "CharStrings", "Private", "Subrs", 
+					"defaultWidthX", "nominalWidthX"];
+					
+				key = keys[b0];  vs=1;
+				if(b0==12) { 
+					var keys = [ "Copyright", "isFixedPitch", "ItalicAngle", "UnderlinePosition", "UnderlineThickness", "PaintType", "CharstringType", "FontMatrix", "StrokeWidth", "BlueScale",
+					"BlueShift", "BlueFuzz", "StemSnapH", "StemSnapV", "ForceBold", 0,0, "LanguageGroup", "ExpansionFactor", "initialRandomSeed",
+					"SyntheticBase", "PostScript", "BaseFontName", "BaseFontBlend", 0,0,0,0,0,0, 
+					"ROS", "CIDFontVersion", "CIDFontRevision", "CIDFontType", "CIDCount", "UIDBase", "FDArray", "FDSelect", "FontName"];
+					key = keys[b1];  vs=2; 
+				}
+			}
+			
+			if(key!=null) {  dict[key] = carr.length==1 ? carr[0] : carr;  carr=[]; }
+			else  carr.push(val);  
+			
+			offset += vs;		
+		}	
+		return dict;
+	}
+
+
+Typr.cmap = {};
+Typr.cmap.parse = function(data, offset, length)
+{
+	data = new Uint8Array(data.buffer, offset, length);
+	offset = 0;
+
+	var offset0 = offset;
+	var bin = Typr._bin;
+	var obj = {};
+	var version   = bin.readUshort(data, offset);  offset += 2;
+	var numTables = bin.readUshort(data, offset);  offset += 2;
+	
+	//console.log(version, numTables);
+	
+	var offs = [];
+	obj.tables = [];
+	
+	
+	for(var i=0; i<numTables; i++)
+	{
+		var platformID = bin.readUshort(data, offset);  offset += 2;
+		var encodingID = bin.readUshort(data, offset);  offset += 2;
+		var noffset = bin.readUint(data, offset);       offset += 4;
+		
+		var id = "p"+platformID+"e"+encodingID;
+		
+		//console.log("cmap subtable", platformID, encodingID, noffset);
+		
+		
+		var tind = offs.indexOf(noffset);
+		
+		if(tind==-1)
+		{
+			tind = obj.tables.length;
+			var subt;
+			offs.push(noffset);
+			var format = bin.readUshort(data, noffset);
+			if     (format== 0) subt = Typr.cmap.parse0(data, noffset);
+			else if(format== 4) subt = Typr.cmap.parse4(data, noffset);
+			else if(format== 6) subt = Typr.cmap.parse6(data, noffset);
+			else if(format==12) subt = Typr.cmap.parse12(data,noffset);
+			else console.log("unknown format: "+format, platformID, encodingID, noffset);
+			obj.tables.push(subt);
+		}
+		
+		if(obj[id]!=null) throw "multiple tables for one platform+encoding";
+		obj[id] = tind;
+	}
+	return obj;
+}
+
+Typr.cmap.parse0 = function(data, offset)
+{
+	var bin = Typr._bin;
+	var obj = {};
+	obj.format = bin.readUshort(data, offset);  offset += 2;
+	var len    = bin.readUshort(data, offset);  offset += 2;
+	var lang   = bin.readUshort(data, offset);  offset += 2;
+	obj.map = [];
+	for(var i=0; i<len-6; i++) obj.map.push(data[offset+i]);
+	return obj;
+}
+
+Typr.cmap.parse4 = function(data, offset)
+{
+	var bin = Typr._bin;
+	var offset0 = offset;
+	var obj = {};
+	
+	obj.format = bin.readUshort(data, offset);  offset+=2;
+	var length = bin.readUshort(data, offset);  offset+=2;
+	var language = bin.readUshort(data, offset);  offset+=2;
+	var segCountX2 = bin.readUshort(data, offset);  offset+=2;
+	var segCount = segCountX2/2;
+	obj.searchRange = bin.readUshort(data, offset);  offset+=2;
+	obj.entrySelector = bin.readUshort(data, offset);  offset+=2;
+	obj.rangeShift = bin.readUshort(data, offset);  offset+=2;
+	obj.endCount   = bin.readUshorts(data, offset, segCount);  offset += segCount*2;
+	offset+=2;
+	obj.startCount = bin.readUshorts(data, offset, segCount);  offset += segCount*2;
+	obj.idDelta = [];
+	for(var i=0; i<segCount; i++) {obj.idDelta.push(bin.readShort(data, offset));  offset+=2;}
+	obj.idRangeOffset = bin.readUshorts(data, offset, segCount);  offset += segCount*2;
+	obj.glyphIdArray = [];
+	while(offset< offset0+length) {obj.glyphIdArray.push(bin.readUshort(data, offset));  offset+=2;}
+	return obj;
+}
+
+Typr.cmap.parse6 = function(data, offset)
+{
+	var bin = Typr._bin;
+	var offset0 = offset;
+	var obj = {};
+	
+	obj.format = bin.readUshort(data, offset);  offset+=2;
+	var length = bin.readUshort(data, offset);  offset+=2;
+	var language = bin.readUshort(data, offset);  offset+=2;
+	obj.firstCode = bin.readUshort(data, offset);  offset+=2;
+	var entryCount = bin.readUshort(data, offset);  offset+=2;
+	obj.glyphIdArray = [];
+	for(var i=0; i<entryCount; i++) {obj.glyphIdArray.push(bin.readUshort(data, offset));  offset+=2;}
+	
+	return obj;
+}
+
+Typr.cmap.parse12 = function(data, offset)
+{
+	var bin = Typr._bin;
+	var offset0 = offset;
+	var obj = {};
+	
+	obj.format = bin.readUshort(data, offset);  offset+=2;
+	offset += 2;
+	var length = bin.readUint(data, offset);  offset+=4;
+	var lang   = bin.readUint(data, offset);  offset+=4;
+	var nGroups= bin.readUint(data, offset);  offset+=4;
+	obj.groups = [];
+	
+	for(var i=0; i<nGroups; i++)  
+	{
+		var off = offset + i * 12;
+		var startCharCode = bin.readUint(data, off+0);
+		var endCharCode   = bin.readUint(data, off+4);
+		var startGlyphID  = bin.readUint(data, off+8);
+		obj.groups.push([  startCharCode, endCharCode, startGlyphID  ]);
+	}
+	return obj;
+}
+
+Typr.DSIG = {};
+Typr.DSIG.parse = function(data, offset, length)
+{
+	return {};
+}
+
+
+Typr.glyf = {};
+Typr.glyf.parse = function(data, offset, length, font)
+{
+	var obj = [];
+	for(var g=0; g<font.maxp.numGlyphs; g++) obj.push(null);
+	return obj;
+}
+
+Typr.glyf._parseGlyf = function(font, g)
+{
+	var bin = Typr._bin;
+	var data = font._data;
+	
+	if(font.loca[g]==font.loca[g+1]) return null;
+	
+	var offset = Typr._tabOffset(data, "glyf", font._offset) + font.loca[g];
+	
+	var gl = {};
+		
+	gl.noc  = bin.readShort(data, offset);  offset+=2;		// number of contours
+	gl.xMin = bin.readShort(data, offset);  offset+=2;
+	gl.yMin = bin.readShort(data, offset);  offset+=2;
+	gl.xMax = bin.readShort(data, offset);  offset+=2;
+	gl.yMax = bin.readShort(data, offset);  offset+=2;
+	
+	if(gl.xMin>=gl.xMax || gl.yMin>=gl.yMax) return null;
+		
+	if(gl.noc>0)
+	{
+		gl.endPts = [];
+		for(var i=0; i<gl.noc; i++) { gl.endPts.push(bin.readUshort(data,offset)); offset+=2; }
+		
+		var instructionLength = bin.readUshort(data,offset); offset+=2;
+		if((data.length-offset)<instructionLength) return null;
+		gl.instructions = bin.readBytes(data, offset, instructionLength);   offset+=instructionLength;
+		
+		var crdnum = gl.endPts[gl.noc-1]+1;
+		gl.flags = [];
+		for(var i=0; i<crdnum; i++ ) 
+		{ 
+			var flag = data[offset];  offset++; 
+			gl.flags.push(flag); 
+			if((flag&8)!=0)
+			{
+				var rep = data[offset];  offset++;
+				for(var j=0; j<rep; j++) { gl.flags.push(flag); i++; }
+			}
+		}
+		gl.xs = [];
+		for(var i=0; i<crdnum; i++) {
+			var i8=((gl.flags[i]&2)!=0), same=((gl.flags[i]&16)!=0);  
+			if(i8) { gl.xs.push(same ? data[offset] : -data[offset]);  offset++; }
+			else
+			{
+				if(same) gl.xs.push(0);
+				else { gl.xs.push(bin.readShort(data, offset));  offset+=2; }
+			}
+		}
+		gl.ys = [];
+		for(var i=0; i<crdnum; i++) {
+			var i8=((gl.flags[i]&4)!=0), same=((gl.flags[i]&32)!=0);  
+			if(i8) { gl.ys.push(same ? data[offset] : -data[offset]);  offset++; }
+			else
+			{
+				if(same) gl.ys.push(0);
+				else { gl.ys.push(bin.readShort(data, offset));  offset+=2; }
+			}
+		}
+		var x = 0, y = 0;
+		for(var i=0; i<crdnum; i++) { x += gl.xs[i]; y += gl.ys[i];  gl.xs[i]=x;  gl.ys[i]=y; }
+		//console.log(endPtsOfContours, instructionLength, instructions, flags, xCoordinates, yCoordinates);
+	}
+	else
+	{
+		var ARG_1_AND_2_ARE_WORDS	= 1<<0;
+		var ARGS_ARE_XY_VALUES		= 1<<1;
+		var ROUND_XY_TO_GRID		= 1<<2;
+		var WE_HAVE_A_SCALE			= 1<<3;
+		var RESERVED				= 1<<4;
+		var MORE_COMPONENTS			= 1<<5;
+		var WE_HAVE_AN_X_AND_Y_SCALE= 1<<6;
+		var WE_HAVE_A_TWO_BY_TWO	= 1<<7;
+		var WE_HAVE_INSTRUCTIONS	= 1<<8;
+		var USE_MY_METRICS			= 1<<9;
+		var OVERLAP_COMPOUND		= 1<<10;
+		var SCALED_COMPONENT_OFFSET	= 1<<11;
+		var UNSCALED_COMPONENT_OFFSET	= 1<<12;
+		
+		gl.parts = [];
+		var flags;
+		do {
+			flags = bin.readUshort(data, offset);  offset += 2;
+			var part = { m:{a:1,b:0,c:0,d:1,tx:0,ty:0}, p1:-1, p2:-1 };  gl.parts.push(part);
+			part.glyphIndex = bin.readUshort(data, offset);  offset += 2;
+			if ( flags & ARG_1_AND_2_ARE_WORDS) {
+				var arg1 = bin.readShort(data, offset);  offset += 2;
+				var arg2 = bin.readShort(data, offset);  offset += 2;
+			} else {
+				var arg1 = bin.readInt8(data, offset);  offset ++;
+				var arg2 = bin.readInt8(data, offset);  offset ++;
+			}
+			
+			if(flags & ARGS_ARE_XY_VALUES) { part.m.tx = arg1;  part.m.ty = arg2; }
+			else  {  part.p1=arg1;  part.p2=arg2;  }
+			//part.m.tx = arg1;  part.m.ty = arg2;
+			//else { throw "params are not XY values"; }
+			
+			if ( flags & WE_HAVE_A_SCALE ) {
+				part.m.a = part.m.d = bin.readF2dot14(data, offset);  offset += 2;    
+			} else if ( flags & WE_HAVE_AN_X_AND_Y_SCALE ) {
+				part.m.a = bin.readF2dot14(data, offset);  offset += 2; 
+				part.m.d = bin.readF2dot14(data, offset);  offset += 2; 
+			} else if ( flags & WE_HAVE_A_TWO_BY_TWO ) {
+				part.m.a = bin.readF2dot14(data, offset);  offset += 2; 
+				part.m.b = bin.readF2dot14(data, offset);  offset += 2; 
+				part.m.c = bin.readF2dot14(data, offset);  offset += 2; 
+				part.m.d = bin.readF2dot14(data, offset);  offset += 2; 
+			}
+		} while ( flags & MORE_COMPONENTS ) 
+		if (flags & WE_HAVE_INSTRUCTIONS){
+			var numInstr = bin.readUshort(data, offset);  offset += 2;
+			gl.instr = [];
+			for(var i=0; i<numInstr; i++) { gl.instr.push(data[offset]);  offset++; }
+		}
+	}
+	return gl;
+}
+
+
+Typr.GPOS = {};
+Typr.GPOS.parse = function(data, offset, length, font) {  var o=Typr._lctf.parse(data, offset, length, font, Typr.GPOS.subt);  return o; }
+
+
+Typr.GPOS.subt = function(data, ltype, offset)	// lookup type
+{
+	var bin = Typr._bin, offset0 = offset, tab = {}, nltype = null;
+	
+	tab.fmt  = bin.readUshort(data, offset);  offset+=2;
+	
+	//console.log(ltype, tab.fmt);
+	
+	if(ltype==1 || ltype==2 || ltype==3 || ltype==4 || ltype==6 || ltype==7 || (ltype==8 && tab.fmt<=2)) {
+		var covOff  = bin.readUshort(data, offset);  offset+=2;
+		tab.coverage = Typr._lctf.readCoverage(data, covOff+offset0);
+	}
+	
+	if(ltype==1 && tab.fmt==1) {
+		var valFmt1 = bin.readUshort(data, offset);  offset+=2;
+		var ones1 = Typr._lctf.numOfOnes(valFmt1);
+		if(valFmt1!=0)  tab.pos = Typr.GPOS.readValueRecord(data, offset, valFmt1);
+	}
+	else if(ltype==2) {
+		var valFmt1 = bin.readUshort(data, offset);  offset+=2;
+		var valFmt2 = bin.readUshort(data, offset);  offset+=2;
+		var ones1 = Typr._lctf.numOfOnes(valFmt1);
+		var ones2 = Typr._lctf.numOfOnes(valFmt2);
+		if(tab.fmt==1)
+		{
+			tab.pairsets = [];
+			var psc = bin.readUshort(data, offset);  offset+=2;  // PairSetCount
+			
+			for(var i=0; i<psc; i++)
+			{
+				var psoff = offset0 + bin.readUshort(data, offset);  offset+=2;
+				
+				var pvc = bin.readUshort(data, psoff);  psoff+=2;
+				var arr = [];
+				for(var j=0; j<pvc; j++)
+				{
+					var gid2 = bin.readUshort(data, psoff);  psoff+=2;
+					var value1, value2;
+					if(valFmt1!=0) {  value1 = Typr.GPOS.readValueRecord(data, psoff, valFmt1);  psoff+=ones1*2;  }
+					if(valFmt2!=0) {  value2 = Typr.GPOS.readValueRecord(data, psoff, valFmt2);  psoff+=ones2*2;  }
+					//if(value1!=null) throw "e";
+					arr.push({gid2:gid2, val1:value1, val2:value2});
+				}
+				tab.pairsets.push(arr);
+			}
+		}
+		if(tab.fmt==2)
+		{
+			var classDef1 = bin.readUshort(data, offset);  offset+=2;
+			var classDef2 = bin.readUshort(data, offset);  offset+=2;
+			var class1Count = bin.readUshort(data, offset);  offset+=2;
+			var class2Count = bin.readUshort(data, offset);  offset+=2;
+			
+			tab.classDef1 = Typr._lctf.readClassDef(data, offset0 + classDef1);
+			tab.classDef2 = Typr._lctf.readClassDef(data, offset0 + classDef2);
+			
+			tab.matrix = [];
+			for(var i=0; i<class1Count; i++)
+			{
+				var row = [];  tab.matrix.push(row);
+				for(var j=0; j<class2Count; j++)
+				{
+					var value1 = null, value2 = null;
+					if(valFmt1!=0) { value1 = Typr.GPOS.readValueRecord(data, offset, valFmt1);  offset+=ones1*2; }
+					if(valFmt2!=0) { value2 = Typr.GPOS.readValueRecord(data, offset, valFmt2);  offset+=ones2*2; }
+					row.push({val1:value1, val2:value2});
+				}
+			}
+		}
+	}
+	else if(ltype==4 || ltype==6) {
+		var covOff  = bin.readUshort(data, offset);  offset+=2;
+		tab.baseCoverage = Typr._lctf.readCoverage(data, covOff+offset0);
+		
+		tab.markClassCount = bin.readUshort(data, offset);  offset+=2;
+		var mko = bin.readUshort(data, offset);  offset+=2;
+		tab.MarkArray = Typr.GPOS.readMarkArray(data, offset0+mko);
+		var bso = bin.readUshort(data, offset);  offset+=2;
+		tab.BaseArray = Typr.GPOS.readBaseArray(data, offset0+bso, tab.markClassCount);
+	}
+	else if(ltype==9) {
+		nltype = bin.readUshort(data, offset);  offset+=2;
+		var loff   = bin.readUint  (data, offset);  offset+=4;
+		
+		tab = Typr.GPOS.subt(data, nltype, offset0+loff)[0];
+	}
+	//else console.log("Unknown ltype", ltype);
+	//console.log(ltype, nltype==null?ltype:nltype, tab);
+	return [tab, nltype];
+}
+
+Typr.GPOS.readBaseArray = function(data, offset, mcc) {
+	var bin = Typr._bin, offset0 = offset, out = [];
+	var baseCount = bin.readUshort(data, offset);  offset+=2;
+	for(var i=0; i<baseCount; i++) {
+		var anchs = [];  out.push(anchs);
+		for(var j=0; j<mcc; j++) {
+			var aoff = offset0 + bin.readUshort(data, offset);  offset+=2;
+			anchs.push(  Typr.GPOS.readAnchor(data, aoff)  );
+		}
+	}
+	return out;
+}
+
+Typr.GPOS.readMarkArray = function(data, offset) {
+	var bin = Typr._bin, offset0 = offset, out = [];
+	var mc = bin.readUshort(data, offset);  offset+=2;
+	for(var i=0; i<mc; i++) {
+		var mr = {};  out.push(mr);
+		mr.mclass = bin.readUshort(data, offset);  offset+=2;
+		var anOff = bin.readUshort(data, offset);  offset+=2;
+		mr.anchor = Typr.GPOS.readAnchor(data, offset0+anOff);
+	}
+	return out;
+}
+Typr.GPOS.readAnchor = function(data, offset) {
+	var bin = Typr._bin;
+	var fmt = bin.readUshort(data, offset);  offset+=2;
+	if(fmt==1) return {  x:bin.readShort(data, offset), y:bin.readShort(data, offset+2)  }
+	//console.log("unknown format", fmt);
+}
+
+
+Typr.GPOS.readValueRecord = function(data, offset, valFmt)
+{
+	var bin = Typr._bin;
+	var arr = [];
+	arr.push( (valFmt&1) ? bin.readShort(data, offset) : 0 );  offset += (valFmt&1) ? 2 : 0;  // X_PLACEMENT
+	arr.push( (valFmt&2) ? bin.readShort(data, offset) : 0 );  offset += (valFmt&2) ? 2 : 0;  // Y_PLACEMENT
+	arr.push( (valFmt&4) ? bin.readShort(data, offset) : 0 );  offset += (valFmt&4) ? 2 : 0;  // X_ADVANCE
+	arr.push( (valFmt&8) ? bin.readShort(data, offset) : 0 );  offset += (valFmt&8) ? 2 : 0;  // Y_ADVANCE
+	return arr;
+}
+
+Typr.GSUB = {};
+Typr.GSUB.parse = function(data, offset, length, font) {  return Typr._lctf.parse(data, offset, length, font, Typr.GSUB.subt);  }
+
+
+Typr.GSUB.subt = function(data, ltype, offset)	// lookup type
+{
+	var bin = Typr._bin, offset0 = offset, tab = {};
+	
+	tab.fmt  = bin.readUshort(data, offset);  offset+=2;
+	
+	if(ltype!=1 && ltype!=4 && ltype!=5 && ltype!=6) return null;
+	
+	if(ltype==1 || ltype==4 || (ltype==5 && tab.fmt<=2) || (ltype==6 && tab.fmt<=2)) {
+		var covOff  = bin.readUshort(data, offset);  offset+=2;
+		tab.coverage = Typr._lctf.readCoverage(data, offset0+covOff);	// not always is coverage here
+	}
+	
+	if(false) {}
+	//  Single Substitution Subtable
+	else if(ltype==1) {	
+		if(tab.fmt==1) {
+			tab.delta = bin.readShort(data, offset);  offset+=2;
+		}
+		else if(tab.fmt==2) {
+			var cnt = bin.readUshort(data, offset);  offset+=2;
+			tab.newg = bin.readUshorts(data, offset, cnt);  offset+=tab.newg.length*2;
+		}
+	}
+	//  Ligature Substitution Subtable
+	else if(ltype==4) {
+		tab.vals = [];
+		var cnt = bin.readUshort(data, offset);  offset+=2;
+		for(var i=0; i<cnt; i++) {
+			var loff = bin.readUshort(data, offset);  offset+=2;
+			tab.vals.push(Typr.GSUB.readLigatureSet(data, offset0+loff));
+		}
+		//console.log(tab.coverage);
+		//console.log(tab.vals);
+	} 
+	//  Contextual Substitution Subtable
+	else if(ltype==5) {
+		if(tab.fmt==2) {
+			var cDefOffset = bin.readUshort(data, offset);  offset+=2;
+			tab.cDef = Typr._lctf.readClassDef(data, offset0 + cDefOffset);
+			tab.scset = [];
+			var subClassSetCount = bin.readUshort(data, offset);  offset+=2;
+			for(var i=0; i<subClassSetCount; i++)
+			{
+				var scsOff = bin.readUshort(data, offset);  offset+=2;
+				tab.scset.push(  scsOff==0 ? null : Typr.GSUB.readSubClassSet(data, offset0 + scsOff)  );
+			}
+		}
+		//else console.log("unknown table format", tab.fmt);
+	}
+	//*
+	else if(ltype==6) {
+		/*
+		if(tab.fmt==2) {
+			var btDef = bin.readUshort(data, offset);  offset+=2;
+			var inDef = bin.readUshort(data, offset);  offset+=2;
+			var laDef = bin.readUshort(data, offset);  offset+=2;
+			
+			tab.btDef = Typr._lctf.readClassDef(data, offset0 + btDef);
+			tab.inDef = Typr._lctf.readClassDef(data, offset0 + inDef);
+			tab.laDef = Typr._lctf.readClassDef(data, offset0 + laDef);
+			
+			tab.scset = [];
+			var cnt = bin.readUshort(data, offset);  offset+=2;
+			for(var i=0; i<cnt; i++) {
+				var loff = bin.readUshort(data, offset);  offset+=2;
+				tab.scset.push(Typr.GSUB.readChainSubClassSet(data, offset0+loff));
+			}
+		}
+		*/
+		if(tab.fmt==3) {
+			for(var i=0; i<3; i++) {
+				var cnt = bin.readUshort(data, offset);  offset+=2;
+				var cvgs = [];
+				for(var j=0; j<cnt; j++) cvgs.push(  Typr._lctf.readCoverage(data, offset0 + bin.readUshort(data, offset+j*2))   );
+				offset+=cnt*2;
+				if(i==0) tab.backCvg = cvgs;
+				if(i==1) tab.inptCvg = cvgs;
+				if(i==2) tab.ahedCvg = cvgs;
+			}
+			var cnt = bin.readUshort(data, offset);  offset+=2;
+			tab.lookupRec = Typr.GSUB.readSubstLookupRecords(data, offset, cnt);
+		}
+		//console.log(tab);
+	} //*/
+	//if(tab.coverage.indexOf(3)!=-1) console.log(ltype, fmt, tab);
+	
+	return [tab, null];
+}
+
+Typr.GSUB.readSubClassSet = function(data, offset)
+{
+	var rUs = Typr._bin.readUshort, offset0 = offset, lset = [];
+	var cnt = rUs(data, offset);  offset+=2;
+	for(var i=0; i<cnt; i++) {
+		var loff = rUs(data, offset);  offset+=2;
+		lset.push(Typr.GSUB.readSubClassRule(data, offset0+loff));
+	}
+	return lset;
+}
+Typr.GSUB.readSubClassRule= function(data, offset)
+{
+	var rUs = Typr._bin.readUshort, offset0 = offset, rule = {};
+	var gcount = rUs(data, offset);  offset+=2;
+	var scount = rUs(data, offset);  offset+=2;
+	rule.input = [];
+	for(var i=0; i<gcount-1; i++) {
+		rule.input.push(rUs(data, offset));  offset+=2;
+	}
+	rule.substLookupRecords = Typr.GSUB.readSubstLookupRecords(data, offset, scount);
+	return rule;
+}
+Typr.GSUB.readSubstLookupRecords = function(data, offset, cnt)
+{
+	var rUs = Typr._bin.readUshort;
+	var out = [];
+	for(var i=0; i<cnt; i++) {  out.push(rUs(data, offset), rUs(data, offset+2));  offset+=4;  }
+	return out;
+}
+
+Typr.GSUB.readChainSubClassSet = function(data, offset)
+{
+	var bin = Typr._bin, offset0 = offset, lset = [];
+	var cnt = bin.readUshort(data, offset);  offset+=2;
+	for(var i=0; i<cnt; i++) {
+		var loff = bin.readUshort(data, offset);  offset+=2;
+		lset.push(Typr.GSUB.readChainSubClassRule(data, offset0+loff));
+	}
+	return lset;
+}
+Typr.GSUB.readChainSubClassRule= function(data, offset)
+{
+	var bin = Typr._bin, offset0 = offset, rule = {};
+	var pps = ["backtrack", "input", "lookahead"];
+	for(var pi=0; pi<pps.length; pi++) {
+		var cnt = bin.readUshort(data, offset);  offset+=2;  if(pi==1) cnt--;
+		rule[pps[pi]]=bin.readUshorts(data, offset, cnt);  offset+= rule[pps[pi]].length*2;
+	}
+	var cnt = bin.readUshort(data, offset);  offset+=2;
+	rule.subst = bin.readUshorts(data, offset, cnt*2);  offset += rule.subst.length*2;
+	return rule;
+}
+
+Typr.GSUB.readLigatureSet = function(data, offset)
+{
+	var bin = Typr._bin, offset0 = offset, lset = [];
+	var lcnt = bin.readUshort(data, offset);  offset+=2;
+	for(var j=0; j<lcnt; j++) {
+		var loff = bin.readUshort(data, offset);  offset+=2;
+		lset.push(Typr.GSUB.readLigature(data, offset0+loff));
+	}
+	return lset;
+}
+Typr.GSUB.readLigature = function(data, offset)
+{
+	var bin = Typr._bin, lig = {chain:[]};
+	lig.nglyph = bin.readUshort(data, offset);  offset+=2;
+	var ccnt = bin.readUshort(data, offset);  offset+=2;
+	for(var k=0; k<ccnt-1; k++) {  lig.chain.push(bin.readUshort(data, offset));  offset+=2;  }
+	return lig;
+}
+
+
+
+Typr.head = {};
+Typr.head.parse = function(data, offset, length)
+{
+	var bin = Typr._bin;
+	var obj = {};
+	var tableVersion = bin.readFixed(data, offset);  offset += 4;
+	obj.fontRevision = bin.readFixed(data, offset);  offset += 4;
+	var checkSumAdjustment = bin.readUint(data, offset);  offset += 4;
+	var magicNumber = bin.readUint(data, offset);  offset += 4;
+	obj.flags = bin.readUshort(data, offset);  offset += 2;
+	obj.unitsPerEm = bin.readUshort(data, offset);  offset += 2;
+	obj.created  = bin.readUint64(data, offset);  offset += 8;
+	obj.modified = bin.readUint64(data, offset);  offset += 8;
+	obj.xMin = bin.readShort(data, offset);  offset += 2;
+	obj.yMin = bin.readShort(data, offset);  offset += 2;
+	obj.xMax = bin.readShort(data, offset);  offset += 2;
+	obj.yMax = bin.readShort(data, offset);  offset += 2;
+	obj.macStyle = bin.readUshort(data, offset);  offset += 2;
+	obj.lowestRecPPEM = bin.readUshort(data, offset);  offset += 2;
+	obj.fontDirectionHint = bin.readShort(data, offset);  offset += 2;
+	obj.indexToLocFormat  = bin.readShort(data, offset);  offset += 2;
+	obj.glyphDataFormat   = bin.readShort(data, offset);  offset += 2;
+	return obj;
+}
+
+
+Typr.hhea = {};
+Typr.hhea.parse = function(data, offset, length)
+{
+	var bin = Typr._bin;
+	var obj = {};
+	var tableVersion = bin.readFixed(data, offset);  offset += 4;
+	obj.ascender  = bin.readShort(data, offset);  offset += 2;
+	obj.descender = bin.readShort(data, offset);  offset += 2;
+	obj.lineGap = bin.readShort(data, offset);  offset += 2;
+	
+	obj.advanceWidthMax = bin.readUshort(data, offset);  offset += 2;
+	obj.minLeftSideBearing  = bin.readShort(data, offset);  offset += 2;
+	obj.minRightSideBearing = bin.readShort(data, offset);  offset += 2;
+	obj.xMaxExtent = bin.readShort(data, offset);  offset += 2;
+	
+	obj.caretSlopeRise = bin.readShort(data, offset);  offset += 2;
+	obj.caretSlopeRun  = bin.readShort(data, offset);  offset += 2;
+	obj.caretOffset    = bin.readShort(data, offset);  offset += 2;
+	
+	offset += 4*2;
+	
+	obj.metricDataFormat = bin.readShort (data, offset);  offset += 2;
+	obj.numberOfHMetrics = bin.readUshort(data, offset);  offset += 2;
+	return obj;
+}
+
+
+Typr.hmtx = {};
+Typr.hmtx.parse = function(data, offset, length, font)
+{
+	var bin = Typr._bin;
+	var obj = {};
+	
+	obj.aWidth = [];
+	obj.lsBearing = [];
+	
+	
+	var aw = 0, lsb = 0;
+	
+	for(var i=0; i<font.maxp.numGlyphs; i++)
+	{
+		if(i<font.hhea.numberOfHMetrics) {  aw=bin.readUshort(data, offset);  offset += 2;  lsb=bin.readShort(data, offset);  offset+=2;  }
+		obj.aWidth.push(aw);
+		obj.lsBearing.push(lsb);
+	}
+	
+	return obj;
+}
+
+
+Typr.kern = {};
+Typr.kern.parse = function(data, offset, length, font)
+{
+	var bin = Typr._bin;
+	
+	var version = bin.readUshort(data, offset);  offset+=2;
+	if(version==1) return Typr.kern.parseV1(data, offset-2, length, font);
+	var nTables = bin.readUshort(data, offset);  offset+=2;
+	
+	var map = {glyph1: [], rval:[]};
+	for(var i=0; i<nTables; i++)
+	{
+		offset+=2;	// skip version
+		var length  = bin.readUshort(data, offset);  offset+=2;
+		var coverage = bin.readUshort(data, offset);  offset+=2;
+		var format = coverage>>>8;
+		/* I have seen format 128 once, that's why I do */ format &= 0xf;
+		if(format==0) offset = Typr.kern.readFormat0(data, offset, map);
+		else throw "unknown kern table format: "+format;
+	}
+	return map;
+}
+
+Typr.kern.parseV1 = function(data, offset, length, font)
+{
+	var bin = Typr._bin;
+	
+	var version = bin.readFixed(data, offset);  offset+=4;
+	var nTables = bin.readUint(data, offset);  offset+=4;
+	
+	var map = {glyph1: [], rval:[]};
+	for(var i=0; i<nTables; i++)
+	{
+		var length = bin.readUint(data, offset);   offset+=4;
+		var coverage = bin.readUshort(data, offset);  offset+=2;
+		var tupleIndex = bin.readUshort(data, offset);  offset+=2;
+		var format = coverage>>>8;
+		/* I have seen format 128 once, that's why I do */ format &= 0xf;
+		if(format==0) offset = Typr.kern.readFormat0(data, offset, map);
+		else throw "unknown kern table format: "+format;
+	}
+	return map;
+}
+
+Typr.kern.readFormat0 = function(data, offset, map)
+{
+	var bin = Typr._bin;
+	var pleft = -1;
+	var nPairs        = bin.readUshort(data, offset);  offset+=2;
+	var searchRange   = bin.readUshort(data, offset);  offset+=2;
+	var entrySelector = bin.readUshort(data, offset);  offset+=2;
+	var rangeShift    = bin.readUshort(data, offset);  offset+=2;
+	for(var j=0; j<nPairs; j++)
+	{
+		var left  = bin.readUshort(data, offset);  offset+=2;
+		var right = bin.readUshort(data, offset);  offset+=2;
+		var value = bin.readShort (data, offset);  offset+=2;
+		if(left!=pleft) { map.glyph1.push(left);  map.rval.push({ glyph2:[], vals:[] }) }
+		var rval = map.rval[map.rval.length-1];
+		rval.glyph2.push(right);   rval.vals.push(value);
+		pleft = left;
+	}
+	return offset;
+}
+
+
+
+Typr.loca = {};
+Typr.loca.parse = function(data, offset, length, font)
+{
+	var bin = Typr._bin;
+	var obj = [];
+	
+	var ver = font.head.indexToLocFormat;
+	//console.log("loca", ver, length, 4*font.maxp.numGlyphs);
+	var len = font.maxp.numGlyphs+1;
+	
+	if(ver==0) for(var i=0; i<len; i++) obj.push(bin.readUshort(data, offset+(i<<1))<<1);
+	if(ver==1) for(var i=0; i<len; i++) obj.push(bin.readUint  (data, offset+(i<<2))   );
+	
+	return obj;
+}
+
+
+Typr.maxp = {};
+Typr.maxp.parse = function(data, offset, length)
+{
+	//console.log(data.length, offset, length);
+	
+	var bin = Typr._bin;
+	var obj = {};
+	
+	// both versions 0.5 and 1.0
+	var ver = bin.readUint(data, offset); offset += 4;
+	obj.numGlyphs = bin.readUshort(data, offset);  offset += 2;
+	
+	// only 1.0
+	if(ver == 0x00010000)
+	{
+		obj.maxPoints             = bin.readUshort(data, offset);  offset += 2;
+		obj.maxContours           = bin.readUshort(data, offset);  offset += 2;
+		obj.maxCompositePoints    = bin.readUshort(data, offset);  offset += 2;
+		obj.maxCompositeContours  = bin.readUshort(data, offset);  offset += 2;
+		obj.maxZones              = bin.readUshort(data, offset);  offset += 2;
+		obj.maxTwilightPoints     = bin.readUshort(data, offset);  offset += 2;
+		obj.maxStorage            = bin.readUshort(data, offset);  offset += 2;
+		obj.maxFunctionDefs       = bin.readUshort(data, offset);  offset += 2;
+		obj.maxInstructionDefs    = bin.readUshort(data, offset);  offset += 2;
+		obj.maxStackElements      = bin.readUshort(data, offset);  offset += 2;
+		obj.maxSizeOfInstructions = bin.readUshort(data, offset);  offset += 2;
+		obj.maxComponentElements  = bin.readUshort(data, offset);  offset += 2;
+		obj.maxComponentDepth     = bin.readUshort(data, offset);  offset += 2;
+	}
+	
+	return obj;
+}
+
+
+Typr.name = {};
+Typr.name.parse = function(data, offset, length)
+{
+	var bin = Typr._bin;
+	var obj = {};
+	var format = bin.readUshort(data, offset);  offset += 2;
+	var count  = bin.readUshort(data, offset);  offset += 2;
+	var stringOffset = bin.readUshort(data, offset);  offset += 2;
+	
+	//console.log(format,count);
+	
+	var names = [
+		"copyright",
+		"fontFamily",
+		"fontSubfamily",
+		"ID",
+		"fullName",
+		"version",
+		"postScriptName",
+		"trademark",
+		"manufacturer",
+		"designer",
+		"description",
+		"urlVendor",
+		"urlDesigner",
+		"licence",
+		"licenceURL",
+		"---",
+		"typoFamilyName",
+		"typoSubfamilyName",
+		"compatibleFull",
+		"sampleText",
+		"postScriptCID",
+		"wwsFamilyName",
+		"wwsSubfamilyName",
+		"lightPalette",
+		"darkPalette"
+	];
+	
+	var offset0 = offset;
+	
+	for(var i=0; i<count; i++)
+	{
+		var platformID = bin.readUshort(data, offset);  offset += 2;
+		var encodingID = bin.readUshort(data, offset);  offset += 2;
+		var languageID = bin.readUshort(data, offset);  offset += 2;
+		var nameID     = bin.readUshort(data, offset);  offset += 2;
+		var slen       = bin.readUshort(data, offset);  offset += 2;
+		var noffset    = bin.readUshort(data, offset);  offset += 2;
+		//console.log(platformID, encodingID, languageID.toString(16), nameID, length, noffset);
+		
+		var cname = names[nameID];
+		var soff = offset0 + count*12 + noffset;
+		var str;
+		if(false){}
+		else if(platformID == 0) str = bin.readUnicode(data, soff, slen/2);
+		else if(platformID == 3 && encodingID == 0) str = bin.readUnicode(data, soff, slen/2);
+		else if(encodingID == 0) str = bin.readASCII  (data, soff, slen);
+		else if(encodingID == 1) str = bin.readUnicode(data, soff, slen/2);
+		else if(encodingID == 3) str = bin.readUnicode(data, soff, slen/2);
+		
+		else if(platformID == 1) { str = bin.readASCII(data, soff, slen);  console.log("reading unknown MAC encoding "+encodingID+" as ASCII") }
+		else throw "unknown encoding "+encodingID + ", platformID: "+platformID;
+		
+		var tid = "p"+platformID+","+(languageID).toString(16);//Typr._platforms[platformID];
+		if(obj[tid]==null) obj[tid] = {};
+		obj[tid][cname] = str;
+		obj[tid]._lang = languageID;
+		//console.log(tid, obj[tid]);
+	}
+	/*
+	if(format == 1)
+	{
+		var langTagCount = bin.readUshort(data, offset);  offset += 2;
+		for(var i=0; i<langTagCount; i++)
+		{
+			var length  = bin.readUshort(data, offset);  offset += 2;
+			var noffset = bin.readUshort(data, offset);  offset += 2;
+		}
+	}
+	*/
+	
+	//console.log(obj);
+	
+	for(var p in obj) if(obj[p].postScriptName!=null && obj[p]._lang==0x0409) return obj[p];		// United States
+	for(var p in obj) if(obj[p].postScriptName!=null && obj[p]._lang==0x0000) return obj[p];		// Universal
+	for(var p in obj) if(obj[p].postScriptName!=null && obj[p]._lang==0x0c0c) return obj[p];		// Canada
+	for(var p in obj) if(obj[p].postScriptName!=null) return obj[p];
+	
+	var tname;
+	for(var p in obj) { tname=p; break; }
+	console.log("returning name table with languageID "+ obj[tname]._lang);
+	return obj[tname];
+}
+
+
+Typr["OS/2"] = {};
+Typr["OS/2"].parse = function(data, offset, length)
+{
+	var bin = Typr._bin;
+	var ver = bin.readUshort(data, offset); offset += 2;
+	
+	var obj = {};
+	if     (ver==0) Typr["OS/2"].version0(data, offset, obj);
+	else if(ver==1) Typr["OS/2"].version1(data, offset, obj);
+	else if(ver==2 || ver==3 || ver==4) Typr["OS/2"].version2(data, offset, obj);
+	else if(ver==5) Typr["OS/2"].version5(data, offset, obj);
+	else throw "unknown OS/2 table version: "+ver;
+	
+	return obj;
+}
+
+Typr["OS/2"].version0 = function(data, offset, obj)
+{
+	var bin = Typr._bin;
+	obj.xAvgCharWidth = bin.readShort(data, offset); offset += 2;
+	obj.usWeightClass = bin.readUshort(data, offset); offset += 2;
+	obj.usWidthClass  = bin.readUshort(data, offset); offset += 2;
+	obj.fsType = bin.readUshort(data, offset); offset += 2;
+	obj.ySubscriptXSize = bin.readShort(data, offset); offset += 2;
+	obj.ySubscriptYSize = bin.readShort(data, offset); offset += 2;
+	obj.ySubscriptXOffset = bin.readShort(data, offset); offset += 2;
+	obj.ySubscriptYOffset = bin.readShort(data, offset); offset += 2; 
+	obj.ySuperscriptXSize = bin.readShort(data, offset); offset += 2; 
+	obj.ySuperscriptYSize = bin.readShort(data, offset); offset += 2; 
+	obj.ySuperscriptXOffset = bin.readShort(data, offset); offset += 2;
+	obj.ySuperscriptYOffset = bin.readShort(data, offset); offset += 2;
+	obj.yStrikeoutSize = bin.readShort(data, offset); offset += 2;
+	obj.yStrikeoutPosition = bin.readShort(data, offset); offset += 2;
+	obj.sFamilyClass = bin.readShort(data, offset); offset += 2;
+	obj.panose = bin.readBytes(data, offset, 10);  offset += 10;
+	obj.ulUnicodeRange1	= bin.readUint(data, offset);  offset += 4;
+	obj.ulUnicodeRange2	= bin.readUint(data, offset);  offset += 4;
+	obj.ulUnicodeRange3	= bin.readUint(data, offset);  offset += 4;
+	obj.ulUnicodeRange4	= bin.readUint(data, offset);  offset += 4;
+	obj.achVendID = bin.readASCII(data, offset, 4);  offset += 4;
+	obj.fsSelection	 = bin.readUshort(data, offset); offset += 2;
+	obj.usFirstCharIndex = bin.readUshort(data, offset); offset += 2;
+	obj.usLastCharIndex = bin.readUshort(data, offset); offset += 2;
+	obj.sTypoAscender = bin.readShort(data, offset); offset += 2;
+	obj.sTypoDescender = bin.readShort(data, offset); offset += 2;
+	obj.sTypoLineGap = bin.readShort(data, offset); offset += 2;
+	obj.usWinAscent = bin.readUshort(data, offset); offset += 2;
+	obj.usWinDescent = bin.readUshort(data, offset); offset += 2;
+	return offset;
+}
+
+Typr["OS/2"].version1 = function(data, offset, obj)
+{
+	var bin = Typr._bin;
+	offset = Typr["OS/2"].version0(data, offset, obj);
+	
+	obj.ulCodePageRange1 = bin.readUint(data, offset); offset += 4;
+	obj.ulCodePageRange2 = bin.readUint(data, offset); offset += 4;
+	return offset;
+}
+
+Typr["OS/2"].version2 = function(data, offset, obj)
+{
+	var bin = Typr._bin;
+	offset = Typr["OS/2"].version1(data, offset, obj);
+	
+	obj.sxHeight = bin.readShort(data, offset); offset += 2;
+	obj.sCapHeight = bin.readShort(data, offset); offset += 2;
+	obj.usDefault = bin.readUshort(data, offset); offset += 2;
+	obj.usBreak = bin.readUshort(data, offset); offset += 2;
+	obj.usMaxContext = bin.readUshort(data, offset); offset += 2;
+	return offset;
+}
+
+Typr["OS/2"].version5 = function(data, offset, obj)
+{
+	var bin = Typr._bin;
+	offset = Typr["OS/2"].version2(data, offset, obj);
+
+	obj.usLowerOpticalPointSize = bin.readUshort(data, offset); offset += 2;
+	obj.usUpperOpticalPointSize = bin.readUshort(data, offset); offset += 2;
+	return offset;
+}
+
+Typr.post = {};
+Typr.post.parse = function(data, offset, length)
+{
+	var bin = Typr._bin;
+	var obj = {};
+	
+	obj.version           = bin.readFixed(data, offset);  offset+=4;
+	obj.italicAngle       = bin.readFixed(data, offset);  offset+=4;
+	obj.underlinePosition = bin.readShort(data, offset);  offset+=2;
+	obj.underlineThickness = bin.readShort(data, offset);  offset+=2;
+
+	return obj;
+}
+Typr.SVG = {};
+Typr.SVG.parse = function(data, offset, length)
+{
+	var bin = Typr._bin;
+	var obj = { entries: []};
+
+	var offset0 = offset;
+
+	var tableVersion = bin.readUshort(data, offset);	offset += 2;
+	var svgDocIndexOffset = bin.readUint(data, offset);	offset += 4;
+	var reserved = bin.readUint(data, offset); offset += 4;
+
+	offset = svgDocIndexOffset + offset0;
+
+	var numEntries = bin.readUshort(data, offset);	offset += 2;
+
+	for(var i=0; i<numEntries; i++)
+	{
+		var startGlyphID = bin.readUshort(data, offset);  offset += 2;
+		var endGlyphID   = bin.readUshort(data, offset);  offset += 2;
+		var svgDocOffset = bin.readUint  (data, offset);  offset += 4;
+		var svgDocLength = bin.readUint  (data, offset);  offset += 4;
+
+		var sbuf = new Uint8Array(data.buffer, offset0 + svgDocOffset + svgDocIndexOffset, svgDocLength);
+		var svg = bin.readUTF8(sbuf, 0, sbuf.length);
+		
+		for(var f=startGlyphID; f<=endGlyphID; f++) {
+			obj.entries[f] = svg;
+		}
+	}
+	return obj;
+}
+
+
+if(Typr  ==null) Typr   = {};
+if(Typr.U==null) Typr.U = {};
+
+
+Typr.U.codeToGlyph = function(font, code)
+{
+	var cmap = font.cmap;
+	
+	var tind = -1;
+	if(cmap.p0e4!=null) tind = cmap.p0e4;
+	else if(cmap.p3e1!=null) tind = cmap.p3e1;
+	else if(cmap.p1e0!=null) tind = cmap.p1e0;
+	else if(cmap.p0e3!=null) tind = cmap.p0e3;
+	
+	if(tind==-1) throw "no familiar platform and encoding!";
+	
+	var tab = cmap.tables[tind], gid = -1;
+	
+	if(tab.format==0)
+	{
+		if(code>=tab.map.length) gid = 0;
+		else gid = tab.map[code];
+	}
+	else if(tab.format==4)
+	{
+		var sind = -1;
+		for(var i=0; i<tab.endCount.length; i++)   if(code<=tab.endCount[i]){  sind=i;  break;  } 
+		if(sind==-1) gid = 0;
+		else if(tab.startCount[sind]>code) gid = 0;
+		else {
+			var gli = 0;
+			if(tab.idRangeOffset[sind]!=0) gli = tab.glyphIdArray[(code-tab.startCount[sind]) + (tab.idRangeOffset[sind]>>1) - (tab.idRangeOffset.length-sind)];
+			else                           gli = code + tab.idDelta[sind];
+			gid = (gli & 0xFFFF);
+		}
+	}
+	else if(tab.format==12)
+	{
+		if(code>tab.groups[tab.groups.length-1][1]) gid = 0;
+		else {
+			for(var i=0; i<tab.groups.length; i++)
+			{
+				var grp = tab.groups[i];
+				if(grp[0]<=code && code<=grp[1]) {  gid = grp[2] + (code-grp[0]);  }
+			}
+			if(gid==-1) gid=0;
+		}
+	}
+	else throw "unknown cmap table format "+tab.format;
+	
+	
+	// if the font claims to have a Glyph for a character, but the glyph is empty, and the character is not "white", it is a lie!
+	if(gid!=0 && (font.SVG==null || font.SVG.entries[gid]==null) && font.CFF==null && font.loca[gid]==font.loca[gid+1]
+		&& [0x9,0xa,0xb,0xc,0xd,0x20,0x85,0xa0,0x1680,0x2028,0x2029,0x202f,0x3000,
+			0x180e,0x200b,0x200c,0x200d,0x2060,0xfeff].indexOf(code)==-1 && !(0x2000<=code && code<=0x200a))  gid=0;
+	
+	return gid;
+}
+
+
+Typr.U.glyphToPath = function(font, gid)
+{
+	var path = { cmds:[], crds:[] };
+	if(font.SVG && font.SVG.entries[gid]) {
+		var p = font.SVG.entries[gid];  if(p==null) return path;
+		if(typeof p == "string") {  p = Typr.U.SVG.toPath(p);  font.SVG.entries[gid]=p;  }
+		return p;
+	}
+	else if(font.CFF) {
+		var state = {x:0,y:0,stack:[],nStems:0,haveWidth:false,width: font.CFF.Private ? font.CFF.Private.defaultWidthX : 0,open:false};
+		var cff=font.CFF, pdct = font.CFF.Private;
+		if(cff.ROS) {
+			var gi = 0;
+			while(cff.FDSelect[gi+2]<=gid) gi+=2;
+			pdct = cff.FDArray[cff.FDSelect[gi+1]].Private;
+		}
+		Typr.U._drawCFF(font.CFF.CharStrings[gid], state, cff, pdct, path);
+	}
+	else if(font.glyf) {  Typr.U._drawGlyf(gid, font, path);  }
+	return path;
+}
+
+Typr.U._drawGlyf = function(gid, font, path)
+{
+	var gl = font.glyf[gid];
+	if(gl==null) gl = font.glyf[gid] = Typr.glyf._parseGlyf(font, gid);
+	if(gl!=null){
+		if(gl.noc>-1) Typr.U._simpleGlyph(gl, path);
+		else          Typr.U._compoGlyph (gl, font, path);
+	}
+}
+Typr.U._simpleGlyph = function(gl, p)
+{
+	for(var c=0; c<gl.noc; c++)
+	{
+		var i0 = (c==0) ? 0 : (gl.endPts[c-1] + 1);
+		var il = gl.endPts[c];
+		
+		for(var i=i0; i<=il; i++)
+		{
+			var pr = (i==i0)?il:(i-1);
+			var nx = (i==il)?i0:(i+1);
+			var onCurve = gl.flags[i]&1;
+			var prOnCurve = gl.flags[pr]&1;
+			var nxOnCurve = gl.flags[nx]&1;
+			
+			var x = gl.xs[i], y = gl.ys[i];
+			
+			if(i==i0) { 
+				if(onCurve)  
+				{
+					if(prOnCurve) Typr.U.P.moveTo(p, gl.xs[pr], gl.ys[pr]); 
+					else          {  Typr.U.P.moveTo(p,x,y);  continue;  /*  will do curveTo at il  */  }
+				}
+				else        
+				{
+					if(prOnCurve) Typr.U.P.moveTo(p,  gl.xs[pr],       gl.ys[pr]        );
+					else          Typr.U.P.moveTo(p, Math.floor((gl.xs[pr]+x)*0.5), Math.floor((gl.ys[pr]+y)*0.5)   ); 
+				}
+			}
+			if(onCurve)
+			{
+				if(prOnCurve) Typr.U.P.lineTo(p,x,y);
+			}
+			else
+			{
+				if(nxOnCurve) Typr.U.P.qcurveTo(p, x, y, gl.xs[nx], gl.ys[nx]); 
+				else          Typr.U.P.qcurveTo(p, x, y, Math.floor((x+gl.xs[nx])*0.5), Math.floor((y+gl.ys[nx])*0.5) ); 
+			}
+		}
+		Typr.U.P.closePath(p);
+	}
+}
+Typr.U._compoGlyph = function(gl, font, p)
+{
+	for(var j=0; j<gl.parts.length; j++)
+	{
+		var path = { cmds:[], crds:[] };
+		var prt = gl.parts[j];
+		Typr.U._drawGlyf(prt.glyphIndex, font, path);
+		
+		var m = prt.m;
+		for(var i=0; i<path.crds.length; i+=2)
+		{
+			var x = path.crds[i  ], y = path.crds[i+1];
+			p.crds.push(x*m.a + y*m.b + m.tx);
+			p.crds.push(x*m.c + y*m.d + m.ty);
+		}
+		for(var i=0; i<path.cmds.length; i++) p.cmds.push(path.cmds[i]);
+	}
+}
+
+
+Typr.U._getGlyphClass = function(g, cd)
+{
+	var intr = Typr._lctf.getInterval(cd, g);
+	return intr==-1 ? 0 : cd[intr+2];
+	//for(var i=0; i<cd.start.length; i++) 
+	//	if(cd.start[i]<=g && cd.end[i]>=g) return cd.class[i];
+	//return 0;
+}
+
+Typr.U.getPairAdjustment = function(font, g1, g2)
+{
+	var gP = -1;
+	//console.log(gP, g1);
+	//return 0;
+	if(font["GPOS"]) {
+		var gpos = font["GPOS"];
+		var llist = gpos.lookupList, flist = gpos.featureList;
+		var tused = [];
+		for(var i=0; i<flist.length; i++) 
+		{
+			var fl = flist[i];  //console.log(fl);
+			if(fl.tag!="kern" && fl.tag!="mark" && fl.tag!="mkmk") continue;
+			for(var ti=0; ti<fl.tab.length; ti++) {
+				if(tused[fl.tab[ti]]) continue;  tused[fl.tab[ti]] = true;
+				var tab = llist[fl.tab[ti]];
+				//console.log(tab);
+				
+				for(var j=0; j<tab.tabs.length; j++)
+				{
+					var ltab = tab.tabs[j], ind, indP;
+					
+					if(ltab.coverage    ) {  ind  = Typr._lctf.coverageIndex(ltab.coverage,     g1);  if(ind ==-1) continue;  }
+					if(ltab.baseCoverage) {  indP = Typr._lctf.coverageIndex(ltab.baseCoverage, gP);  if(indP==-1) continue;  }
+					
+					//console.log(tab.ltype, tab.flag, ltab);
+					
+					if(tab.ltype==1) {
+						return ltab.pos[2];
+					}
+					else if(tab.ltype==2)
+					{
+						var adj;
+						if(ltab.fmt==1)
+						{
+							var right = ltab.pairsets[ind];
+							for(var i=0; i<right.length; i++) if(right[i].gid2==g2) adj = right[i];
+						}
+						else if(ltab.fmt==2)
+						{
+							var c1 = Typr.U._getGlyphClass(g1, ltab.classDef1);
+							var c2 = Typr.U._getGlyphClass(g2, ltab.classDef2);
+							adj = ltab.matrix[c1][c2];
+						}
+						//if(adj) console.log(ltab, adj);
+						// need val1 for SourceHanSansSC-Regular : "To"
+						if(adj && adj.val1) return adj.val1[2];
+					}
+					else if(tab.ltype==4 || tab.ltype==6) {
+						//console.log(ltab.MarkArray.length, ind, ltab.BaseArray.length, indP);
+						var mark = ltab.MarkArray[ind ];
+						var base = ltab.BaseArray[indP][mark.mclass];
+						//console.log(g1, mark.anchor, gP, base);
+						//return [base.x-mark.anchor.x-font.hmtx.aWidth[gP], base.y-mark.anchor.y, 0, 0];
+						//console.log(ind, indP, ltab, mark, base);
+					}
+				}
+			}
+		}
+	}
+	if(font.kern)
+	{
+		var ind1 = font.kern.glyph1.indexOf(g1);
+		if(ind1!=-1)
+		{
+			var ind2 = font.kern.rval[ind1].glyph2.indexOf(g2);
+			if(ind2!=-1) return [0,0,font.kern.rval[ind1].vals[ind2],0][2];
+		}
+	}
+	//console.log("no kern");
+	return [0,0,0,0][2];
+}
+
+Typr.U.stringToGlyphs = function(font, str)
+{
+	var gls = [], reord = [];
+	for(var i=0; i<str.length; i++) {
+		var cc = str.codePointAt(i);  if(cc>0xffff) i++;
+		if(cc==2367) reord.push(i, -1);
+		if(0x17c1<=cc && cc<=0x17c5) {
+			var j = i-1;
+			for(; j>=0 && (i-j)<5; j--) {
+				var cc2 = str.codePointAt(j);
+				if(/*[0x1781,0x178a,0x178e,0x178f,0x17a0].indexOf(cc2)!=-1*/
+					(0x1780<=cc2 && cc2<=0x178f) || cc2==0x17a0) {  reord.push(i,j-i);  j=-1;  break;  }
+			}
+			//if(j!=-1) console.log("did not move back", i, str[i]);
+		}
+		if(cc==0x17d2 && str.charCodeAt(i+1)==0x179a) reord.push(i,-1,i+1,-1);
+		gls.push(Typr.U.codeToGlyph(font, cc));
+	}
+	for(var i=0; i<reord.length; i+=2) {
+		var p = reord[i], d=reord[i+1];
+		var t = gls[p];  for(var j=0; j>d; j--) gls[p+j]=gls[p+j-1];
+		gls[p+d]=t;
+	}
+	//console.log(gls.slice(0));
+	
+	//console.log(gls);  return gls;
+	
+	var gsub = font["GSUB"];  if(gsub==null) return gls;
+	var llist = gsub.lookupList, flist = gsub.featureList;
+	
+	var cligs = ["rlig", "liga", "mset",  "isol","init","fina","medi",   "half", "pres"
+				,"blws"         /* Tibetan fonts like Himalaya.ttf */
+				,"blwf", "pstf", "pref" /* Khmer fonts like Battambang.ttf */
+				,"ccmp"  /*  Thai fonts like itim.ttf */
+				];
+	
+	//console.log(gls.slice(0));
+	var tused = [];
+	for(var fi=0; fi<flist.length; fi++)
+	{
+		var fl = flist[fi];  if(cligs.indexOf(fl.tag)==-1) continue;
+		//continue;
+		//if(fl.tag=="blwf") continue;
+		//console.log(fl);
+		//console.log(fl.tag);
+		for(var ti=0; ti<fl.tab.length; ti++) {
+			if(tused[fl.tab[ti]]) continue;  tused[fl.tab[ti]] = true;
+			var tab = llist[fl.tab[ti]];
+			//console.log(fl.tab[ti], tab.ltype);
+			//console.log(fl.tag, tab);
+			for(var ci=0; ci<gls.length; ci++) {
+				var feat = Typr.U._getWPfeature(str, ci);
+				if("isol,init,fina,medi".indexOf(fl.tag)!=-1 && fl.tag!=feat) continue;
+				
+				Typr.U._applySubs(gls, ci, tab, llist);
+			}
+		}
+	}
+	
+	return gls;
+}
+Typr.U._getWPfeature = function(str, ci) {  // get Word Position feature
+	var wsep = "\n\t\" ,.:;!?()  ،";
+	var R = "آأؤإاةدذرزوٱٲٳٵٶٷڈډڊڋڌڍڎڏڐڑڒړڔڕږڗژڙۀۃۄۅۆۇۈۉۊۋۍۏےۓەۮۯܐܕܖܗܘܙܞܨܪܬܯݍݙݚݛݫݬݱݳݴݸݹࡀࡆࡇࡉࡔࡧࡩࡪࢪࢫࢬࢮࢱࢲࢹૅેૉ૊૎૏ૐ૑૒૝ૡ૤૯஁ஃ஄அஉ஌எஏ஑னப஫஬";
+	var L = "ꡲ્૗";
+	
+	var slft = ci==0            || wsep.indexOf(str[ci-1])!=-1;
+	var srgt = ci==str.length-1 || wsep.indexOf(str[ci+1])!=-1;
+		
+	if(!slft && R.indexOf(str[ci-1])!=-1) slft=true;
+	if(!srgt && R.indexOf(str[ci  ])!=-1) srgt=true;
+		
+	if(!srgt && L.indexOf(str[ci+1])!=-1) srgt=true;
+	if(!slft && L.indexOf(str[ci  ])!=-1) slft=true;
+		
+	var feat = null;
+	if(slft) feat = srgt ? "isol" : "init";
+	else     feat = srgt ? "fina" : "medi";
+	
+	return feat;
+}
+Typr.U._applySubs = function(gls, ci, tab, llist) {
+	var rlim = Math.min(3, gls.length-ci-1);
+	//if(ci==0) console.log("++++ ", tab.ltype);
+	for(var j=0; j<tab.tabs.length; j++)
+	{
+		if(tab.tabs[j]==null) continue;
+		var ltab = tab.tabs[j], ind;
+		if(ltab.coverage) {  ind = Typr._lctf.coverageIndex(ltab.coverage, gls[ci]);  if(ind==-1) continue;  }
+		//if(ci==0) console.log(ind, ltab);
+		//*
+		if(tab.ltype==1) {
+			var gl = gls[ci];
+			if(ltab.fmt==1) gls[ci] = gls[ci]+ltab.delta;
+			else            gls[ci] = ltab.newg[ind];
+			//console.log("applying ... 1", ci, gl, gls[ci]);
+		}//*
+		else if(tab.ltype==4) {
+			var vals = ltab.vals[ind];
+			
+			for(var k=0; k<vals.length; k++) {
+				var lig = vals[k], rl = lig.chain.length;  if(rl>rlim) continue;
+				var good = true, em1 = 0;
+				for(var l=0; l<rl; l++) {  while(gls[ci+em1+(1+l)]==-1)em1++;  if(lig.chain[l]!=gls[ci+em1+(1+l)]) good=false;  }
+				if(!good) continue;
+				gls[ci]=lig.nglyph;
+				for(var l=0; l<rl+em1; l++) gls[ci+l+1]=-1;   break;  // first character changed, other ligatures do not apply anymore
+				//console.log("lig", ci, lig.chain, lig.nglyph);
+				//console.log("applying ...");
+			}
+		}
+		/*else  if(tab.ltype==5 && ltab.fmt==2) {
+			var cind = Typr._lctf.getInterval(ltab.cDef, gls[ci]);  //if(cind==-1) continue;
+			var cls = ltab.cDef[cind+2], scs = ltab.scset[cls];   console.log(gls[ci], cls, ltab);
+			for(var i=0; i<scs.length; i++) {
+				var sc = scs[i], inp = sc.input;
+				if(inp.length>rlim) continue;
+				var good = true;
+				for(var l=0; l<inp.length; l++) {
+					var cind2 = Typr._lctf.getInterval(ltab.cDef, gls[ci+1+l]);
+					if(cind==-1 && ltab.cDef[cind2+2]!=inp[l]) {  good=false;  break;  }
+				}
+				if(!good) continue;
+				//console.log(ci, gl);
+				var lrs = sc.substLookupRecords;
+				for(var k=0; k<lrs.length; k+=2)
+				{
+					var gi = lrs[k], tabi = lrs[k+1];
+					//Typr.U._applyType1(gls, ci+gi, llist[tabi]);
+					//console.log(tabi, gls[ci+gi], llist[tabi]);
+				}
+			}
+		}*/
+		else if(tab.ltype==6 && ltab.fmt==3) {
+			//if(ltab.backCvg.length==0) return;
+			if(!Typr.U._glsCovered(gls, ltab.backCvg, ci-ltab.backCvg.length)) continue;
+			if(!Typr.U._glsCovered(gls, ltab.inptCvg, ci)) continue;
+			if(!Typr.U._glsCovered(gls, ltab.ahedCvg, ci+ltab.inptCvg.length)) continue;
+			//console.log(ci, ltab);
+			var lr = ltab.lookupRec;  //console.log(ci, gl, lr);
+			for(var i=0; i<lr.length; i+=2) {
+				var cind = lr[i], tab2 = llist[lr[i+1]];
+				//console.log("-", lr[i+1], tab2);
+				Typr.U._applySubs(gls, ci+cind, tab2, llist);
+			}
+		}
+		//else console.log("Unknown table", tab.ltype, ltab.fmt);
+		//*/
+	}
+}
+
+Typr.U._glsCovered = function(gls, cvgs, ci) {
+	for(var i=0; i<cvgs.length; i++) {
+		var ind = Typr._lctf.coverageIndex(cvgs[i], gls[ci+i]);  if(ind==-1) return false;
+	}
+	return true;
+}
+
+Typr.U.glyphsToPath = function(font, gls, clr)
+{	
+	//gls = gls.reverse();//gls.slice(0,12).concat(gls.slice(12).reverse());
+	
+	var tpath = {cmds:[], crds:[]};
+	var x = 0, y = 0;
+	
+	for(var i=0; i<gls.length; i++)
+	{
+		var gid = gls[i];  if(gid==-1) continue;
+		var gid2 = (i<gls.length-1 && gls[i+1]!=-1)  ? gls[i+1] : 0;
+		var gidP = (i==0 ? 0 : gls[i-1]);
+		var path = Typr.U.glyphToPath(font, gid);
+		for(var j=0; j<path.crds.length; j+=2)
+		{
+			tpath.crds.push(path.crds[j  ] + x);
+			tpath.crds.push(path.crds[j+1] + y);
+		}
+		if(clr) tpath.cmds.push(clr);
+		for(var j=0; j<path.cmds.length; j++) tpath.cmds.push(path.cmds[j]);
+		if(clr) {  if(path.cmds.length==0) tpath.cmds.pop();  else  tpath.cmds.push("X");  }
+		x += font.hmtx.aWidth[gid];// - font.hmtx.lsBearing[gid];
+		var padj = Typr.U.getPairAdjustment(font, gid, gid2);  //console.log(padj);
+		x += padj;
+	}
+	return tpath;
+}
+
+Typr.U.pathToSVG = function(path, prec)
+{
+	if(prec==null) prec = 5;
+	var out = [], co = 0, lmap = {"M":2,"L":2,"Q":4,"C":6};
+	for(var i=0; i<path.cmds.length; i++)
+	{
+		var cmd = path.cmds[i], cn = co+(lmap[cmd]?lmap[cmd]:0);  
+		out.push(cmd);
+		while(co<cn) {  var c = path.crds[co++];  out.push(parseFloat(c.toFixed(prec))+(co==cn?"":" "));  }
+	}
+	return out.join("");
+}
+Typr.U.SVGToPath = function(d) {
+	var pth = {cmds:[], crds:[]};
+	var toks = Typr.U.SVG._tokens(d);
+	Typr.U.SVG._toksToPath(toks, pth);
+	return pth;
+}
+
+Typr.U.pathToContext = function(path, ctx)
+{
+	var c = 0, crds = path.crds;
+	
+	for(var j=0; j<path.cmds.length; j++)
+	{
+		var cmd = path.cmds[j];
+		if     (cmd=="M") {
+			ctx.moveTo(crds[c], crds[c+1]);
+			c+=2;
+		}
+		else if(cmd=="L") {
+			ctx.lineTo(crds[c], crds[c+1]);
+			c+=2;
+		}
+		else if(cmd=="C") {
+			ctx.bezierCurveTo(crds[c], crds[c+1], crds[c+2], crds[c+3], crds[c+4], crds[c+5]);
+			c+=6;
+		}
+		else if(cmd=="Q") {
+			ctx.quadraticCurveTo(crds[c], crds[c+1], crds[c+2], crds[c+3]);
+			c+=4;
+		}
+		else if(cmd.charAt(0)=="#") {
+			ctx.beginPath();
+			ctx.fillStyle = cmd;
+		}
+		else if(cmd=="Z") {
+			ctx.closePath();
+		}
+		else if(cmd=="X") {
+			ctx.fill();
+		}
+	}
+}
+
+
+Typr.U.P = {};
+Typr.U.P.moveTo = function(p, x, y)
+{
+	p.cmds.push("M");  p.crds.push(x,y);
+}
+Typr.U.P.lineTo = function(p, x, y)
+{
+	p.cmds.push("L");  p.crds.push(x,y);
+}
+Typr.U.P.curveTo = function(p, a,b,c,d,e,f)
+{
+	p.cmds.push("C");  p.crds.push(a,b,c,d,e,f);
+}
+Typr.U.P.qcurveTo = function(p, a,b,c,d)
+{
+	p.cmds.push("Q");  p.crds.push(a,b,c,d);
+}
+Typr.U.P.closePath = function(p) {  p.cmds.push("Z");  }
+
+
+
+
+Typr.U._drawCFF = function(cmds, state, font, pdct, p)
+{
+	var stack = state.stack;
+	var nStems = state.nStems, haveWidth=state.haveWidth, width=state.width, open=state.open;
+	var i=0;
+	var x=state.x, y=state.y, c1x=0, c1y=0, c2x=0, c2y=0, c3x=0, c3y=0, c4x=0, c4y=0, jpx=0, jpy=0;
+	
+	var o = {val:0,size:0};
+	//console.log(cmds);
+	while(i<cmds.length)
+	{
+		Typr.CFF.getCharString(cmds, i, o);
+		var v = o.val;
+		i += o.size;
+			
+		if(false) {}
+		else if(v=="o1" || v=="o18")  //  hstem || hstemhm
+		{
+			var hasWidthArg;
+
+			// The number of stem operators on the stack is always even.
+			// If the value is uneven, that means a width is specified.
+			hasWidthArg = stack.length % 2 !== 0;
+			if (hasWidthArg && !haveWidth) {
+				width = stack.shift() + pdct.nominalWidthX;
+			}
+
+			nStems += stack.length >> 1;
+			stack.length = 0;
+			haveWidth = true;
+		}
+		else if(v=="o3" || v=="o23")  // vstem || vstemhm
+		{
+			var hasWidthArg;
+
+			// The number of stem operators on the stack is always even.
+			// If the value is uneven, that means a width is specified.
+			hasWidthArg = stack.length % 2 !== 0;
+			if (hasWidthArg && !haveWidth) {
+				width = stack.shift() + pdct.nominalWidthX;
+			}
+
+			nStems += stack.length >> 1;
+			stack.length = 0;
+			haveWidth = true;
+		}
+		else if(v=="o4")
+		{
+			if (stack.length > 1 && !haveWidth) {
+                        width = stack.shift() + pdct.nominalWidthX;
+                        haveWidth = true;
+                    }
+			if(open) Typr.U.P.closePath(p);
+
+                    y += stack.pop();
+					Typr.U.P.moveTo(p,x,y);   open=true;
+		}
+		else if(v=="o5")
+		{
+			while (stack.length > 0) {
+                        x += stack.shift();
+                        y += stack.shift();
+                        Typr.U.P.lineTo(p, x, y);
+                    }
+		}
+		else if(v=="o6" || v=="o7")  // hlineto || vlineto
+		{
+			var count = stack.length;
+			var isX = (v == "o6");
+			
+			for(var j=0; j<count; j++) {
+				var sval = stack.shift();
+				
+				if(isX) x += sval;  else  y += sval;
+				isX = !isX;
+				Typr.U.P.lineTo(p, x, y);
+			}
+		}
+		else if(v=="o8" || v=="o24")	// rrcurveto || rcurveline
+		{
+			var count = stack.length;
+			var index = 0;
+			while(index+6 <= count) {
+				c1x = x + stack.shift();
+				c1y = y + stack.shift();
+				c2x = c1x + stack.shift();
+				c2y = c1y + stack.shift();
+				x = c2x + stack.shift();
+				y = c2y + stack.shift();
+				Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, x, y);
+				index+=6;
+			}
+			if(v=="o24")
+			{
+				x += stack.shift();
+				y += stack.shift();
+				Typr.U.P.lineTo(p, x, y);
+			}
+		}
+		else if(v=="o11")  break;
+		else if(v=="o1234" || v=="o1235" || v=="o1236" || v=="o1237")//if((v+"").slice(0,3)=="o12")
+		{
+			if(v=="o1234")
+			{
+				c1x = x   + stack.shift();    // dx1
+                c1y = y;                      // dy1
+				c2x = c1x + stack.shift();    // dx2
+				c2y = c1y + stack.shift();    // dy2
+				jpx = c2x + stack.shift();    // dx3
+				jpy = c2y;                    // dy3
+				c3x = jpx + stack.shift();    // dx4
+				c3y = c2y;                    // dy4
+				c4x = c3x + stack.shift();    // dx5
+				c4y = y;                      // dy5
+				x = c4x + stack.shift();      // dx6
+				Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, jpx, jpy);
+				Typr.U.P.curveTo(p, c3x, c3y, c4x, c4y, x, y);
+				
+			}
+			if(v=="o1235")
+			{
+				c1x = x   + stack.shift();    // dx1
+				c1y = y   + stack.shift();    // dy1
+				c2x = c1x + stack.shift();    // dx2
+				c2y = c1y + stack.shift();    // dy2
+				jpx = c2x + stack.shift();    // dx3
+				jpy = c2y + stack.shift();    // dy3
+				c3x = jpx + stack.shift();    // dx4
+				c3y = jpy + stack.shift();    // dy4
+				c4x = c3x + stack.shift();    // dx5
+				c4y = c3y + stack.shift();    // dy5
+				x = c4x + stack.shift();      // dx6
+				y = c4y + stack.shift();      // dy6
+				stack.shift();                // flex depth
+				Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, jpx, jpy);
+				Typr.U.P.curveTo(p, c3x, c3y, c4x, c4y, x, y);
+			}
+			if(v=="o1236")
+			{
+				c1x = x   + stack.shift();    // dx1
+				c1y = y   + stack.shift();    // dy1
+				c2x = c1x + stack.shift();    // dx2
+				c2y = c1y + stack.shift();    // dy2
+				jpx = c2x + stack.shift();    // dx3
+				jpy = c2y;                    // dy3
+				c3x = jpx + stack.shift();    // dx4
+				c3y = c2y;                    // dy4
+				c4x = c3x + stack.shift();    // dx5
+				c4y = c3y + stack.shift();    // dy5
+				x = c4x + stack.shift();      // dx6
+				Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, jpx, jpy);
+				Typr.U.P.curveTo(p, c3x, c3y, c4x, c4y, x, y);
+			}
+			if(v=="o1237")
+			{
+				c1x = x   + stack.shift();    // dx1
+				c1y = y   + stack.shift();    // dy1
+				c2x = c1x + stack.shift();    // dx2
+				c2y = c1y + stack.shift();    // dy2
+				jpx = c2x + stack.shift();    // dx3
+				jpy = c2y + stack.shift();    // dy3
+				c3x = jpx + stack.shift();    // dx4
+				c3y = jpy + stack.shift();    // dy4
+				c4x = c3x + stack.shift();    // dx5
+				c4y = c3y + stack.shift();    // dy5
+				if (Math.abs(c4x - x) > Math.abs(c4y - y)) {
+				    x = c4x + stack.shift();
+				} else {
+				    y = c4y + stack.shift();
+				}
+				Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, jpx, jpy);
+				Typr.U.P.curveTo(p, c3x, c3y, c4x, c4y, x, y);
+			}
+		}
+		else if(v=="o14")
+		{
+			if (stack.length > 0 && !haveWidth) {
+                        width = stack.shift() + font.nominalWidthX;
+                        haveWidth = true;
+                    }
+			if(stack.length==4) // seac = standard encoding accented character
+			{
+			
+				var asb = 0;
+				var adx = stack.shift();
+				var ady = stack.shift();
+				var bchar = stack.shift();
+				var achar = stack.shift();
+			
+				
+				var bind = Typr.CFF.glyphBySE(font, bchar);
+				var aind = Typr.CFF.glyphBySE(font, achar);
+				
+				//console.log(bchar, bind);
+				//console.log(achar, aind);
+				//state.x=x; state.y=y; state.nStems=nStems; state.haveWidth=haveWidth; state.width=width;  state.open=open;
+				
+				Typr.U._drawCFF(font.CharStrings[bind], state,font,pdct,p);
+				state.x = adx; state.y = ady;
+				Typr.U._drawCFF(font.CharStrings[aind], state,font,pdct,p);
+				
+				//x=state.x; y=state.y; nStems=state.nStems; haveWidth=state.haveWidth; width=state.width;  open=state.open;
+			}
+			if(open) {  Typr.U.P.closePath(p);  open=false;  }
+		}		
+		else if(v=="o19" || v=="o20") 
+		{ 
+			var hasWidthArg;
+
+			// The number of stem operators on the stack is always even.
+			// If the value is uneven, that means a width is specified.
+			hasWidthArg = stack.length % 2 !== 0;
+			if (hasWidthArg && !haveWidth) {
+				width = stack.shift() + pdct.nominalWidthX;
+			}
+
+			nStems += stack.length >> 1;
+			stack.length = 0;
+			haveWidth = true;
+			
+			i += (nStems + 7) >> 3;
+		}
+		
+		else if(v=="o21") {
+			if (stack.length > 2 && !haveWidth) {
+                        width = stack.shift() + pdct.nominalWidthX;
+                        haveWidth = true;
+                    }
+
+                    y += stack.pop();
+                    x += stack.pop();
+					
+					if(open) Typr.U.P.closePath(p);
+                    Typr.U.P.moveTo(p,x,y);   open=true;
+		}
+		else if(v=="o22")
+		{
+			 if (stack.length > 1 && !haveWidth) {
+                        width = stack.shift() + pdct.nominalWidthX;
+                        haveWidth = true;
+                    }
+					
+                    x += stack.pop();
+					
+					if(open) Typr.U.P.closePath(p);
+					Typr.U.P.moveTo(p,x,y);   open=true;                    
+		}
+		else if(v=="o25")
+		{
+			while (stack.length > 6) {
+                        x += stack.shift();
+                        y += stack.shift();
+                        Typr.U.P.lineTo(p, x, y);
+                    }
+
+                    c1x = x + stack.shift();
+                    c1y = y + stack.shift();
+                    c2x = c1x + stack.shift();
+                    c2y = c1y + stack.shift();
+                    x = c2x + stack.shift();
+                    y = c2y + stack.shift();
+                    Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, x, y);
+		}
+		else if(v=="o26") 
+		{
+			if (stack.length % 2) {
+                        x += stack.shift();
+                    }
+
+                    while (stack.length > 0) {
+                        c1x = x;
+                        c1y = y + stack.shift();
+                        c2x = c1x + stack.shift();
+                        c2y = c1y + stack.shift();
+                        x = c2x;
+                        y = c2y + stack.shift();
+                        Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, x, y);
+                    }
+
+		}
+		else if(v=="o27")
+		{
+			if (stack.length % 2) {
+                        y += stack.shift();
+                    }
+
+                    while (stack.length > 0) {
+                        c1x = x + stack.shift();
+                        c1y = y;
+                        c2x = c1x + stack.shift();
+                        c2y = c1y + stack.shift();
+                        x = c2x + stack.shift();
+                        y = c2y;
+                        Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, x, y);
+                    }
+		}
+		else if(v=="o10" || v=="o29")	// callsubr || callgsubr
+		{
+			var obj = (v=="o10" ? pdct : font);
+			if(stack.length==0) { console.log("error: empty stack");  }
+			else {
+				var ind = stack.pop();
+				var subr = obj.Subrs[ ind + obj.Bias ];
+				state.x=x; state.y=y; state.nStems=nStems; state.haveWidth=haveWidth; state.width=width;  state.open=open;
+				Typr.U._drawCFF(subr, state,font,pdct,p);
+				x=state.x; y=state.y; nStems=state.nStems; haveWidth=state.haveWidth; width=state.width;  open=state.open;
+			}
+		}
+		else if(v=="o30" || v=="o31")   // vhcurveto || hvcurveto
+		{
+			var count, count1 = stack.length;
+			var index = 0;
+			var alternate = v == "o31";
+			
+			count  = count1 & ~2;
+			index += count1 - count;
+			
+			while ( index < count ) 
+			{
+				if(alternate)
+				{
+					c1x = x + stack.shift();
+					c1y = y;
+					c2x = c1x + stack.shift();
+					c2y = c1y + stack.shift();
+					y = c2y + stack.shift();
+					if(count-index == 5) {  x = c2x + stack.shift();  index++;  }
+					else x = c2x;
+					alternate = false;
+				}
+				else
+				{
+					c1x = x;
+					c1y = y + stack.shift();
+					c2x = c1x + stack.shift();
+					c2y = c1y + stack.shift();
+					x = c2x + stack.shift();
+					if(count-index == 5) {  y = c2y + stack.shift();  index++;  }
+					else y = c2y;
+					alternate = true;
+				}
+                Typr.U.P.curveTo(p, c1x, c1y, c2x, c2y, x, y);
+				index += 4;
+			}
+		}
+		
+		else if((v+"").charAt(0)=="o") {   console.log("Unknown operation: "+v, cmds); throw v;  }
+		else stack.push(v);
+	}
+	//console.log(cmds);
+	state.x=x; state.y=y; state.nStems=nStems; state.haveWidth=haveWidth; state.width=width; state.open=open;
+}
+
+
+
+Typr.U.SVG = {};
+Typr.U.SVG.toPath = function(str)
+{
+	var pth = {cmds:[], crds:[]};
+	if(str==null) return pth;
+	
+	var prsr = new DOMParser();
+	var doc = prsr["parseFromString"](str,"image/svg+xml");
+	
+	var svg = doc.firstChild;  while(svg.tagName!="svg") svg = svg.nextSibling;
+	var vb = svg.getAttribute("viewBox");
+	if(vb) vb = vb.trim().split(" ").map(parseFloat);  else   vb = [0,0,1000,1000];
+	Typr.U.SVG._toPath(svg.children, pth);
+	for(var i=0; i<pth.crds.length; i+=2) {
+		var x = pth.crds[i], y = pth.crds[i+1];
+		x -= vb[0];
+		y -= vb[1];
+		y = -y;
+		pth.crds[i] = x;
+		pth.crds[i+1] = y;
+	}
+	return pth;
+}
+
+Typr.U.SVG._toPath = function(nds, pth, fill) {
+	for(var ni=0; ni<nds.length; ni++) {
+		var nd = nds[ni], tn = nd.tagName;
+		var cfl = nd.getAttribute("fill");  if(cfl==null) cfl = fill;
+		if(tn=="g") Typr.U.SVG._toPath(nd.children, pth, cfl);
+		else if(tn=="path") {
+			pth.cmds.push(cfl?cfl:"#000000");
+			var d = nd.getAttribute("d");  //console.log(d);
+			var toks = Typr.U.SVG._tokens(d);  //console.log(toks);
+			Typr.U.SVG._toksToPath(toks, pth);  pth.cmds.push("X");
+		}
+		else if(tn=="defs") {}
+		else console.log(tn, nd);
+	}
+}
+
+Typr.U.SVG._tokens = function(d) {
+	var ts = [], off = 0, rn=false, cn="", pc="";  // reading number, current number, prev char
+	while(off<d.length){
+		var cc=d.charCodeAt(off), ch = d.charAt(off);  off++;
+		var isNum = (48<=cc && cc<=57) || ch=="." || ch=="-" || ch=="e";
+		
+		if(rn) {
+			if( (ch=="-" && pc!="e") || (ch=="." && cn.indexOf(".")!=-1)) {  ts.push(parseFloat(cn));  cn=ch;  }
+			else if(isNum) cn+=ch;
+			else {  ts.push(parseFloat(cn));  if(ch!="," && ch!=" ") ts.push(ch);  rn=false;  }
+		}
+		else {
+			if(isNum) {  cn=ch;  rn=true;  }
+			else if(ch!="," && ch!=" ") ts.push(ch);
+		}
+		pc = ch;
+	}
+	if(rn) ts.push(parseFloat(cn));
+	return ts;
+}
+
+Typr.U.SVG._toksToPath = function(ts, pth) {	
+	var i = 0, x = 0, y = 0, ox = 0, oy = 0;
+	var pc = {"M":2,"L":2,"H":1,"V":1,   "S":4, "A":7,   "Q":4, "C":6};
+	var cmds = pth.cmds, crds = pth.crds;
+	
+	while(i<ts.length) {
+		var cmd = ts[i];  i++;
+		var cmu = cmd.toUpperCase();
+		
+		if(cmu=="Z") {  cmds.push("Z");  x=ox;  y=oy;  }
+		else {
+			var ps = pc[cmu], reps = Typr.U.SVG._reps(ts, i, ps);
+		
+			for(var j=0; j<reps; j++) {
+				// If a moveto is followed by multiple pairs of coordinates, the subsequent pairs are treated as implicit lineto commands.
+				if(j==1 && cmu=="M") {  cmd=(cmd==cmu)?"L":"l";  cmu="L";  }
+				
+				var xi = 0, yi = 0;   if(cmd!=cmu) {  xi=x;  yi=y;  }
+				
+				if(false) {}
+				else if(cmu=="M") {  x = xi+ts[i++];  y = yi+ts[i++];  cmds.push("M");  crds.push(x,y);  ox=x;  oy=y; }
+				else if(cmu=="L") {  x = xi+ts[i++];  y = yi+ts[i++];  cmds.push("L");  crds.push(x,y);  }
+				else if(cmu=="H") {  x = xi+ts[i++];                   cmds.push("L");  crds.push(x,y);  }
+				else if(cmu=="V") {  y = yi+ts[i++];                   cmds.push("L");  crds.push(x,y);  }
+				else if(cmu=="Q") {
+					var x1=xi+ts[i++], y1=yi+ts[i++], x2=xi+ts[i++], y2=yi+ts[i++];
+					cmds.push("Q");  crds.push(x1,y1,x2,y2);  x=x2;  y=y2;
+				}
+				else if(cmu=="C") {
+					var x1=xi+ts[i++], y1=yi+ts[i++], x2=xi+ts[i++], y2=yi+ts[i++], x3=xi+ts[i++], y3=yi+ts[i++];
+					cmds.push("C");  crds.push(x1,y1,x2,y2,x3,y3);  x=x3;  y=y3;
+				}
+				else if(cmu=="S") {
+					var co = Math.max(crds.length-4, 0);
+					var x1 = x+x-crds[co], y1 = y+y-crds[co+1];
+					var x2=xi+ts[i++], y2=yi+ts[i++], x3=xi+ts[i++], y3=yi+ts[i++];  
+					cmds.push("C");  crds.push(x1,y1,x2,y2,x3,y3);  x=x3;  y=y3;
+				}
+				else if(cmu=="A") {  // convert SVG Arc to four cubic bézier segments "C"
+					var x1 = x, y1 = y;
+					var rx = ts[i++], ry = ts[i++];
+					var phi = ts[i++]*(Math.PI/180), fA = ts[i++], fS = ts[i++];
+					var x2 = xi+ts[i++], y2 = yi+ts[i++];
+					
+					var hdx = (x1-x2)/2, hdy = (y1-y2)/2;
+					var cosP = Math.cos(phi), sinP = Math.sin(phi);
+					var x1A =  cosP * hdx + sinP * hdy;
+					var y1A = -sinP * hdx + cosP * hdy;
+					
+					var rxS = rx*rx, ryS = ry*ry;
+					var x1AS  = x1A*x1A, y1AS = y1A*y1A;
+					var frc = (rxS*ryS  - rxS*y1AS - ryS*x1AS)  /  (rxS*y1AS + ryS*x1AS);
+					var coef = (fA!=fS ? 1 : -1) * Math.sqrt(  Math.max(frc,0)  );
+					var cxA =  coef * (rx * y1A) / ry;
+					var cyA = -coef * (ry * x1A) / rx;
+					
+					var cx = cosP*cxA - sinP*cyA + (x1+x2)/2;
+					var cy = sinP*cxA + cosP*cyA + (y1+y2)/2;
+					
+					var angl = function(ux,uy,vx,vy) {  var lU = Math.sqrt(ux*ux+uy*uy), lV = Math.sqrt(vx*vx+vy*vy);
+							var num = (ux*vx+uy*vy) / (lU*lV);  //console.log(num, Math.acos(num));
+							return (ux*vy-uy*vx>=0?1:-1) * Math.acos( Math.max(-1, Math.min(1, num)) );  }
+					
+					var vX = (x1A-cxA)/rx, vY = (y1A-cyA)/ry;
+					var theta1 = angl( 1, 0, vX,vY);
+					var dtheta = angl(vX,vY, (-x1A-cxA)/rx, (-y1A-cyA)/ry);
+					dtheta = dtheta % (2*Math.PI);
+					
+					var arc = function(gst,x,y,r,a0,a1, neg) {
+						var rotate = function(m, a) {  var si=Math.sin(a), co=Math.cos(a);
+							var a=m[0],b=m[1],c=m[2],d=m[3];
+							m[0] = (a *co)+(b *si);   m[1] = (-a *si)+(b *co);
+							m[2] = (c *co)+(d *si);   m[3] = (-c *si)+(d *co);
+						}
+						var multArr= function(m,a) {
+							for(var i=0; i<a.length; i+=2) {
+								var x=a[i], y=a[i+1];
+								a[i  ] = m[0]*x + m[2]*y + m[4];
+								a[i+1] = m[1]*x + m[3]*y + m[5];
+							}
+						}
+						var concatA= function(a,b) {  for(var i=0; i<b.length; i++) a.push(b[i]);  }
+						var concatP= function(p,r) {  concatA(p.cmds,r.cmds);  concatA(p.crds,r.crds);  }
+						// circle from a0 counter-clock-wise to a1
+						if(neg) while(a1>a0) a1-=2*Math.PI;
+						else    while(a1<a0) a1+=2*Math.PI;
+						var th = (a1-a0)/4;
+						
+						var x0 = Math.cos(th/2), y0 = -Math.sin(th/2);
+						var x1 = (4-x0)/3, y1 = y0==0 ? y0 : (1-x0)*(3-x0)/(3*y0);
+						var x2 = x1, y2 = -y1;
+						var x3 = x0, y3 = -y0;
+						
+						var ps = [x1,y1,x2,y2,x3,y3];
+						
+						var pth = {cmds:["C","C","C","C"], crds:ps.slice(0)};
+						var rot = [1,0,0,1,0,0];  rotate(rot,-th);
+						for(var i=0; i<3; i++) {  multArr(rot,ps);  concatA(pth.crds,ps);  }
+						
+						rotate(rot, -a0+th/2);  rot[0]*=r;  rot[1]*=r;  rot[2]*=r;  rot[3]*=r;  rot[4]=x;  rot[5]=y; 
+						multArr(rot, pth.crds);
+						multArr(gst.ctm, pth.crds);
+						concatP(gst.pth, pth);
+					}
+					
+					var gst = {pth:pth, ctm:[rx*cosP,rx*sinP,-ry*sinP,ry*cosP,cx,cy]};
+					arc(gst, 0,0, 1, theta1, theta1+dtheta, fS==0);
+					x=x2;  y=y2;
+				}
+				else console.log("Unknown SVG command "+cmd);
+			}
+		}
+	}
+}
+Typr.U.SVG._reps = function(ts, off, ps) {
+	var i = off;
+	while(i<ts.length) {  if((typeof ts[i]) == "string") break;  i+=ps;  }
+	return (i-off)/ps;
+}
 
 var UZIP = {};
 
@@ -14145,7 +16667,7 @@ UZIP.F.deflateRaw = function(data, out, opos, lvl) {
 			strt[nc]=ii;
 		} //*/
 		if(cvrd<=i) {
-			if((li>14000 || lc>26697) && (dlen-i)>100) {
+			if(li>14000 || lc>26697) {
 				if(cvrd<i) {  lits[li]=i-cvrd;  li+=2;  cvrd=i;  }
 				pos = UZIP.F._writeBlock(((i==dlen-1) || (cvrd==dlen))?1:0, lits, li, ebits, data,bs,i-bs, out, pos);  li=lc=ebits=0;  bs=i;
 			}
@@ -14839,46 +17361,3 @@ UnionFind.prototype.link = function(x, y) {
 	else if(yd < xd) {  roots[yr] = xr;  }
 	else {  roots[yr] = xr;  ++ranks[xr];  }
 }
-
-
-var Module = (function() {
-  var _scriptDir = typeof document !== 'undefined' && document.currentScript ? document.currentScript.src : undefined;
-  return (
-function(Module) {
-  Module = Module || {};
-
-var a;a||(a=typeof Module !== 'undefined' ? Module : {});var f={},g;for(g in a)a.hasOwnProperty(g)&&(f[g]=a[g]);a.arguments=[];a.thisProgram="./this.program";a.quit=function(b,c){throw c;};a.preRun=[];a.postRun=[];var h=!1,k=!1,l=!1,m=!1;h="object"===typeof window;k="function"===typeof importScripts;l="object"===typeof process&&"function"===typeof require&&!h&&!k;m=!h&&!l&&!k;var n="";
-if(l){n=__dirname+"/";var p,q;a.read=function(b,c){p||(p=require("fs"));q||(q=require("path"));b=q.normalize(b);b=p.readFileSync(b);return c?b:b.toString()};a.readBinary=function(b){b=a.read(b,!0);b.buffer||(b=new Uint8Array(b));b.buffer||r("Assertion failed: undefined");return b};1<process.argv.length&&(a.thisProgram=process.argv[1].replace(/\\/g,"/"));a.arguments=process.argv.slice(2);process.on("uncaughtException",function(b){if(!(b instanceof t))throw b;});process.on("unhandledRejection",r);a.quit=
-function(b){process.exit(b)};a.inspect=function(){return"[Emscripten Module object]"}}else if(m)"undefined"!=typeof read&&(a.read=function(b){return read(b)}),a.readBinary=function(b){if("function"===typeof readbuffer)return new Uint8Array(readbuffer(b));b=read(b,"binary");"object"===typeof b||r("Assertion failed: undefined");return b},"undefined"!=typeof scriptArgs?a.arguments=scriptArgs:"undefined"!=typeof arguments&&(a.arguments=arguments),"function"===typeof quit&&(a.quit=function(b){quit(b)});
-else if(h||k)k?n=self.location.href:document.currentScript&&(n=document.currentScript.src),_scriptDir&&(n=_scriptDir),0!==n.indexOf("blob:")?n=n.substr(0,n.lastIndexOf("/")+1):n="",a.read=function(b){var c=new XMLHttpRequest;c.open("GET",b,!1);c.send(null);return c.responseText},k&&(a.readBinary=function(b){var c=new XMLHttpRequest;c.open("GET",b,!1);c.responseType="arraybuffer";c.send(null);return new Uint8Array(c.response)}),a.readAsync=function(b,c,e){var d=new XMLHttpRequest;d.open("GET",b,!0);
-d.responseType="arraybuffer";d.onload=function(){200==d.status||0==d.status&&d.response?c(d.response):e()};d.onerror=e;d.send(null)},a.setWindowTitle=function(b){document.title=b};var u=a.print||("undefined"!==typeof console?console.log.bind(console):"undefined"!==typeof print?print:null),v=a.printErr||("undefined"!==typeof printErr?printErr:"undefined"!==typeof console&&console.warn.bind(console)||u);for(g in f)f.hasOwnProperty(g)&&(a[g]=f[g]);f=void 0;
-var w={"f64-rem":function(b,c){return b%c},"debugger":function(){debugger}};"object"!==typeof WebAssembly&&v("no native wasm support detected");var y,z=!1;"undefined"!==typeof TextDecoder&&new TextDecoder("utf8");"undefined"!==typeof TextDecoder&&new TextDecoder("utf-16le");function A(b){0<b%65536&&(b+=65536-b%65536);return b}var buffer,B,C,D;
-function E(){a.HEAP8=B=new Int8Array(buffer);a.HEAP16=new Int16Array(buffer);a.HEAP32=D=new Int32Array(buffer);a.HEAPU8=C=new Uint8Array(buffer);a.HEAPU16=new Uint16Array(buffer);a.HEAPU32=new Uint32Array(buffer);a.HEAPF32=new Float32Array(buffer);a.HEAPF64=new Float64Array(buffer)}var F=a.TOTAL_MEMORY||16777216;5242880>F&&v("TOTAL_MEMORY should be larger than TOTAL_STACK, was "+F+"! (TOTAL_STACK=5242880)");
-a.buffer?buffer=a.buffer:"object"===typeof WebAssembly&&"function"===typeof WebAssembly.Memory?(y=new WebAssembly.Memory({initial:F/65536}),buffer=y.buffer):buffer=new ArrayBuffer(F);E();D[21700]=5329936;function G(b){for(;0<b.length;){var c=b.shift();if("function"==typeof c)c();else{var e=c.H;"number"===typeof e?void 0===c.G?a.dynCall_v(e):a.dynCall_vi(e,c.G):e(void 0===c.G?null:c.G)}}}var H=[],I=[],J=[],K=[],L=!1;function M(){var b=a.preRun.shift();H.unshift(b)}var N=0,O=null,P=null;
-a.preloadedImages={};a.preloadedAudios={};function Q(){var b=R;return String.prototype.startsWith?b.startsWith("data:application/octet-stream;base64,"):0===b.indexOf("data:application/octet-stream;base64,")}var R="harfbuzzjs.wasm";if(!Q()){var S=R;R=a.locateFile?a.locateFile(S,n):n+S}function T(){try{if(a.wasmBinary)return new Uint8Array(a.wasmBinary);if(a.readBinary)return a.readBinary(R);throw"both async and sync fetching of the wasm failed";}catch(b){r(b)}}
-function U(){return a.wasmBinary||!h&&!k||"function"!==typeof fetch?new Promise(function(b){b(T())}):fetch(R,{credentials:"same-origin"}).then(function(b){if(!b.ok)throw"failed to load wasm binary file at '"+R+"'";return b.arrayBuffer()}).catch(function(){return T()})}
-function V(b){function c(b){a.asm=b.exports;N--;a.monitorRunDependencies&&a.monitorRunDependencies(N);0==N&&(null!==O&&(clearInterval(O),O=null),P&&(b=P,P=null,b()))}function e(b){c(b.instance)}function d(b){U().then(function(b){return WebAssembly.instantiate(b,x)}).then(b,function(b){v("failed to asynchronously prepare wasm: "+b);r(b)})}var x={env:b,global:{NaN:NaN,Infinity:Infinity},"global.Math":Math,asm2wasm:w};N++;a.monitorRunDependencies&&a.monitorRunDependencies(N);if(a.instantiateWasm)try{return a.instantiateWasm(x,
-c)}catch(aa){return v("Module.instantiateWasm callback failed with error: "+aa),!1}a.wasmBinary||"function"!==typeof WebAssembly.instantiateStreaming||Q()||"function"!==typeof fetch?d(e):WebAssembly.instantiateStreaming(fetch(R,{credentials:"same-origin"}),x).then(e,function(b){v("wasm streaming compile failed: "+b);v("falling back to ArrayBuffer instantiation");d(e)});return{}}
-a.asm=function(b,c){c.memory=y;c.table=new WebAssembly.Table({initial:226,maximum:226,element:"anyfunc"});c.__memory_base=1024;c.__table_base=0;return V(c)};function W(){return B.length}function X(b){a.___errno_location&&(D[a.___errno_location()>>2]=b);return b}
-var Y=a.asm({},{b:r,k:function(){},c:X,j:function(){return 0},i:function(){},h:W,g:function(b,c,e){C.set(C.subarray(c,c+e),b)},f:function(b){if(2147418112<b)return!1;for(var c=Math.max(W(),16777216);c<b;)536870912>=c?c=A(2*c):c=Math.min(A((3*c+2147483648)/4),2147418112);b=A(c);var e=buffer.byteLength;try{var d=-1!==y.grow((b-e)/65536)?buffer=y.buffer:null}catch(x){d=null}if(!d||d.byteLength!=c)return!1;E();return!0},e:function(b){switch(b){case 30:return 16384;case 85:return 131068;case 132:case 133:case 12:case 137:case 138:case 15:case 235:case 16:case 17:case 18:case 19:case 20:case 149:case 13:case 10:case 236:case 153:case 9:case 21:case 22:case 159:case 154:case 14:case 77:case 78:case 139:case 80:case 81:case 82:case 68:case 67:case 164:case 11:case 29:case 47:case 48:case 95:case 52:case 51:case 46:return 200809;
-case 79:return 0;case 27:case 246:case 127:case 128:case 23:case 24:case 160:case 161:case 181:case 182:case 242:case 183:case 184:case 243:case 244:case 245:case 165:case 178:case 179:case 49:case 50:case 168:case 169:case 175:case 170:case 171:case 172:case 97:case 76:case 32:case 173:case 35:return-1;case 176:case 177:case 7:case 155:case 8:case 157:case 125:case 126:case 92:case 93:case 129:case 130:case 131:case 94:case 91:return 1;case 74:case 60:case 69:case 70:case 4:return 1024;case 31:case 42:case 72:return 32;
-case 87:case 26:case 33:return 2147483647;case 34:case 1:return 47839;case 38:case 36:return 99;case 43:case 37:return 2048;case 0:return 2097152;case 3:return 65536;case 28:return 32768;case 44:return 32767;case 75:return 16384;case 39:return 1E3;case 89:return 700;case 71:return 256;case 40:return 255;case 2:return 100;case 180:return 64;case 25:return 20;case 5:return 16;case 6:return 6;case 73:return 4;case 84:return"object"===typeof navigator?navigator.hardwareConcurrency||1:1}X(22);return-1},
-d:function(){r("OOM")},a:86800},buffer);a.asm=Y;a._free=function(){return a.asm.l.apply(null,arguments)};a._hb_blob_create=function(){return a.asm.m.apply(null,arguments)};a._hb_blob_destroy=function(){return a.asm.n.apply(null,arguments)};a._hb_blob_get_length=function(){return a.asm.o.apply(null,arguments)};a._hb_buffer_add_utf8=function(){return a.asm.p.apply(null,arguments)};a._hb_buffer_create=function(){return a.asm.q.apply(null,arguments)};
-a._hb_buffer_destroy=function(){return a.asm.r.apply(null,arguments)};a._hb_buffer_get_length=function(){return a.asm.s.apply(null,arguments)};a._hb_buffer_guess_segment_properties=function(){return a.asm.t.apply(null,arguments)};a._hb_buffer_serialize_glyphs=function(){return a.asm.u.apply(null,arguments)};a._hb_buffer_set_direction=function(){return a.asm.v.apply(null,arguments)};a._hb_direction_from_string=function(){return a.asm.w.apply(null,arguments)};
-a._hb_face_create=function(){return a.asm.x.apply(null,arguments)};a._hb_face_destroy=function(){return a.asm.y.apply(null,arguments)};a._hb_font_create=function(){return a.asm.z.apply(null,arguments)};a._hb_font_destroy=function(){return a.asm.A.apply(null,arguments)};a._hb_font_set_scale=function(){return a.asm.B.apply(null,arguments)};a._hb_shape=function(){return a.asm.C.apply(null,arguments)};a._hb_version_string=function(){return a.asm.D.apply(null,arguments)};
-a._malloc=function(){return a.asm.E.apply(null,arguments)};a.dynCall_vi=function(){return a.asm.F.apply(null,arguments)};a.asm=Y;a.then=function(b){if(a.calledRun)b(a);else{var c=a.onRuntimeInitialized;a.onRuntimeInitialized=function(){c&&c();b(a)}}return a};function t(b){this.name="ExitStatus";this.message="Program terminated with exit("+b+")";this.status=b}t.prototype=Error();t.prototype.constructor=t;P=function ba(){a.calledRun||Z();a.calledRun||(P=ba)};
-function Z(){function b(){if(!a.calledRun&&(a.calledRun=!0,!z)){L||(L=!0,G(I));G(J);if(a.onRuntimeInitialized)a.onRuntimeInitialized();if(a.postRun)for("function"==typeof a.postRun&&(a.postRun=[a.postRun]);a.postRun.length;){var b=a.postRun.shift();K.unshift(b)}G(K)}}if(!(0<N)){if(a.preRun)for("function"==typeof a.preRun&&(a.preRun=[a.preRun]);a.preRun.length;)M();G(H);0<N||a.calledRun||(a.setStatus?(a.setStatus("Running..."),setTimeout(function(){setTimeout(function(){a.setStatus("")},1);b()},1)):
-b())}}a.run=Z;function r(b){if(a.onAbort)a.onAbort(b);void 0!==b?(u(b),v(b),b=JSON.stringify(b)):b="";z=!0;throw"abort("+b+"). Build with -s ASSERTIONS=1 for more info.";}a.abort=r;if(a.preInit)for("function"==typeof a.preInit&&(a.preInit=[a.preInit]);0<a.preInit.length;)a.preInit.pop()();a.noExitRuntime=!0;Z();
-
-
-  return Module
-}
-);
-})();
-if (typeof exports === 'object' && typeof module === 'object')
-      module.exports = Module;
-    else if (typeof define === 'function' && define['amd'])
-      define([], function() { return Module; });
-    else if (typeof exports === 'object')
-      exports["Module"] = Module;
-    
