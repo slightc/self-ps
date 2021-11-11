@@ -101310,7 +101310,7 @@
         S.setAttribute("style", "margin:0;  padding:146px 0px 0 113px; font-size:1.8em;");
         this.VJ.appendChild(S);
         this.Bw = [];
-        var h = [[11, 7], [1, 6], ["PSD VAR0", [25, 0]], "pea.psd", "milk.sketch"];
+        var h = [[11, 7], [1, 6], ["PSD VAR0", [25, 0]], "demo.psd", "demo.sketch"];
         if (new Date().getDate() == 1 && new Date().getMonth() == 3)
             h.push("Go to 2013");
         var q = P.w("li");
@@ -101429,7 +101429,7 @@
             S.data = {
                 X: P.U.Pv,
                 go: {
-                    url: ["images/pea.psd", "images/milk.sketch"][G - 3]
+                    url: ["images/demo.psd", "images/demo.sketch"][G - 3]
                 }
             };
         if (G == 5) {
