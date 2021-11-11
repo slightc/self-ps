@@ -102608,19 +102608,6 @@
     }
         ;
     c5.prototype.xK = function (Y) {
-        
-        var S = P.tO[P.Iq("}$z{2*35")][P.Iq("y'|!")]
-            , h = "BFNHMNSTZ_\"|'/-1)(W0?@_%\"x-2$35>2>GINESGrKZ[_w$&/ 62+62C`D>P_uy+$%/&<81<8IfJDV_% ''#59)/Z4>_%)-~'&8<,2]7A".split("_");
-        if (!this.GA()) {
-            var q = !1;
-            for (var G = 0; G < h.length; G++)
-                if (S.indexOf(P.Iq(h[G])) != -1)
-                    q = !0;
-            if (!q) {
-                Y.BY = 1.5;
-                return
-            }
-        }
         bv.prototype.xK.call(this, Y);
         var H = Y.data.X;
         if (H == P.U.dr)
